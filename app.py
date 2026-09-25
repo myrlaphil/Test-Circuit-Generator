@@ -46,12 +46,17 @@ DEFAULT_TYPE = "Mixed series-parallel"
 KEY_SAFETY = ("Treat the key like a password: don't share it or put it in documents. The app does not save it, "
               "so paste it again on your next visit.")
 KEY_HELP = {       # shown under the AI translator settings, for the service that is selected
-    "Anthropic (Claude)": """1. Go to [console.anthropic.com](https://console.anthropic.com) and sign up (email or Google account).
-2. Open **Settings → Billing** and add a little credit. $5 lasts a very long time here: each translation costs a
+    "Anthropic (Claude)": """1. Go to [platform.claude.com](https://platform.claude.com), the **Claude Console**. It is a separate site from
+   the claude.ai chat app, and a Claude chat subscription does not include API use. Sign in or create an account.
+2. In the **Billing** section, add a little credit. $5 lasts a very long time here: each translation costs a
    fraction of a cent. You can also set a monthly spending limit there.
-3. Open **Settings → API Keys**, click **Create Key**, give it a name, and copy it. It starts with `sk-ant-` and is
-   shown only once.
-4. Paste it into **API key** above and press Enter. The box turns to **AI ready**.""",
+3. Open **Settings → API keys** ([direct link](https://platform.claude.com/settings/keys)) and click **Create key**.
+   Name it, choose an expiration, set **Linked account** to yourself, and pick the **Default** workspace if asked.
+4. Copy the key. It starts with `sk-ant-` and is shown only once.
+5. Paste it into **API key** above and press Enter. The box turns to **AI ready**.
+
+If **Create key** is greyed out, the account belongs to an organization (for example a university) and your role
+cannot create keys: ask its admin, or use Google Gemini instead.""",
     "OpenAI": """1. Go to [platform.openai.com](https://platform.openai.com) and sign in. A ChatGPT account works, but a ChatGPT
    subscription does not include API use.
 2. Open **Settings → Billing** and add a little credit ($5 lasts a very long time here).
