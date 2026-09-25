@@ -273,15 +273,30 @@ def mark_custom() -> None:
     st.session_state._pending_type = CUSTOM
 
 
-def english_changed() -> None:
+def english_changed(key: str) -> None:
+    """`key` is bound when the box is drawn: another callback in the same rerun may already have moved
+    ss.version on, so the key must not be rebuilt from it here."""
     ss = st.session_state
-    translate_english(ss[f"english_{ss.version}"])
     mark_custom()
+    if _once(key):
+        translate_english(ss.get(key, ss.english_text))
 
 
-def retranslate() -> None:
+def _once(key: str) -> bool:
+    """Editing the sentence and clicking Translate fire two callbacks in the same rerun, in an order that differs
+    between desktop Streamlit and the browser build.  Translate only once per rerun (the flag is cleared when the
+    script body starts)."""
     ss = st.session_state
-    translate_english(ss.get(f"english_{ss.version}", ss.english_text))
+    if ss.get("_handled") == key:
+        return False
+    ss._handled = key
+    return True
+
+
+def retranslate(key: str) -> None:
+    ss = st.session_state
+    if _once(key):
+        translate_english(ss.get(key, ss.english_text))
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +421,10 @@ with tab_create:
         if ss.problem_type == CUSTOM:
             st.caption("Your own problem. Picking a problem type makes a random one instead; choosing **Custom** "
                        "again brings this one back.")
-        st.text_area("Plain English", ss.english_text, key=f"english_{ss.version}", height=140,
-                               on_change=english_changed,
+        ss._handled = None                             # callbacks of this rerun are done
+        english_key = f"english_{ss.version}"
+        st.text_area("Plain English", ss.english_text, key=english_key, height=140,
+                               on_change=english_changed, args=(english_key,),
                                placeholder="12 V battery, a 4 ohm and a 2 ohm in series, that pair in parallel with a "
                                            "6 ohm, then a 3 ohm. Find the current through the 2 ohm resistor.",
                                help="Press Ctrl+Enter (⌘+Enter on Mac) or click outside the box to translate. "
@@ -429,7 +446,7 @@ with tab_create:
                        "circuit lingo below.")
         else:
             s1.caption("✓ Translated by fixed rules (no AI).")
-        s2.button("↻ Translate", on_click=retranslate, width="stretch",
+        s2.button("↻ Translate", on_click=retranslate, args=(english_key,), width="stretch",
                   help="Translate the sentence again (for example after connecting the AI translator).")
 
         with st.expander("Circuit lingo (what the figure is built from; edit here if you prefer)",
