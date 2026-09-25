@@ -84,44 +84,55 @@ class LingoError(ValueError):
 # 2. Parsing
 # ---------------------------------------------------------------------------
 
+# Words allowed on the circuit line (dictation-friendly).  Longer phrases come first so that
+# "in series with" becomes + before "with" alone could become ||.
 _WORDS = [
-    (r"\bparallel\b|\bpar\b|\bwith\b|\bpll\b|//", "||"),
-    (r"\bplus\b|\bseries\b|\bthen\b", "+"),
+    (r"\bin\s+series\s+with\b|\bin\s+series\b|\bseries\b|\bplus\b|\bthen\b|\bfollowed\s+by\b", "+"),
+    (r"\bin\s+parallel\s+with\b|\bin\s+parallel\b|\bparallel\b|\bpar\b|\bpll\b|\bacross\b|\bwith\b|//", "||"),
+    (r"\bunknown\b", "?"),
     (r"\bk(?:ilo)?-?\s?ohms?\b", "kΩ"),
     (r"\bohms?\b|\u2126", "Ω"),
     (r"\bvolts?\b", "V"),
 ]
 
-_TOKEN = re.compile(r"\s*(?:(\|\||\+|\(|\))|([A-Za-z][A-Za-z0-9]*)\s*=\s*([0-9]*\.?[0-9]+)\s*(kΩ|Ω)?"
-                    r"|([0-9]*\.?[0-9]+)\s*(kΩ|Ω)?|([A-Za-z][A-Za-z0-9]*))")
+_TOKEN = re.compile(r"\s*(?:(\|\||\+|\(|\))|([A-Za-z][A-Za-z0-9]*)\s*=\s*([0-9]*\.?[0-9]+)\s*(kΩ|Ω)?(\s*\?)?"
+                    r"|([0-9]*\.?[0-9]+)\s*(kΩ|Ω)?(\s*\?)?|([A-Za-z][A-Za-z0-9]*))")
 
 
 def _normalise(s: str) -> str:
     for pat, rep in _WORDS:
         s = re.sub(pat, rep, s, flags=re.I)
+    # "? 6" (from "unknown 6") -> "6?" : the question mark goes after the value it belongs to
+    s = re.sub(r"\?\s*((?:[A-Za-z][A-Za-z0-9]*\s*=\s*)?[0-9]*\.?[0-9]+\s*(?:kΩ|Ω)?)", r"\1?", s)
     return s
 
 
-def _tokenize(expr: str) -> List[Tuple[str, str, Optional[float], bool]]:
-    """-> list of (kind, text, value, named).  kind: op | res"""
+def _tokenize(expr: str) -> List[Tuple[str, str, Optional[float], bool, bool]]:
+    """-> list of (kind, text, value, named, hidden).  kind: op | res"""
     expr = _normalise(expr)
     pos, out = 0, []
     while pos < len(expr):
         m = _TOKEN.match(expr, pos)
         if not m or m.end() == pos:
             rest = expr[pos:].strip()
+            if rest.startswith("?"):
+                raise LingoError("'?' needs a value for the answer key: write 6? for a hidden 6 Ω resistor "
+                                 "(it is drawn as 'R = ?').")
             raise LingoError(f"I don't understand '{rest[:20]}' in the circuit line. Use numbers, +, || and parentheses, "
                              f"e.g. (4 + 2) || 6 + 3.")
-        op, name, nval, nunit, val, unit, bare = m.groups()
+        op, name, nval, nunit, nhid, val, unit, hid, bare = m.groups()
         if op:
-            out.append(("op", op, None, False))
+            out.append(("op", op, None, False, False))
         elif name:
             v = float(nval) * (1000 if nunit == "kΩ" else 1)
-            out.append(("res", name, v, True))
+            out.append(("res", name, v, True, bool(nhid)))
         elif val:
             v = float(val) * (1000 if unit == "kΩ" else 1)
-            out.append(("res", "", v, False))
+            out.append(("res", "", v, False, bool(hid)))
         elif bare:
+            if re.match(r"\s*=\s*\?", expr[m.end():]):
+                raise LingoError(f"{bare}=? needs the value for the answer key: write {bare}=6? "
+                                 f"(it is drawn as '{bare} = ?').")
             raise LingoError(f"'{bare}' has no value. Write it as {bare}=6 (a 6 Ω resistor named {bare}).")
         pos = m.end()
     return out
@@ -160,7 +171,7 @@ class _Parser:
         tok = self.take()
         if tok is None:
             raise LingoError("The circuit line ends too early - a value is missing after the last + or ||.")
-        kind, text, val, named = tok
+        kind, text, val, named, hidden = tok
         if kind == "res":
             self.counter += 1
             name = text if named else f"R{self.counter}"
@@ -169,7 +180,7 @@ class _Parser:
             self.names.append(name)
             if val <= 0:
                 raise LingoError(f"{name} must be greater than 0 Ω.")
-            return R(name, val)
+            return R(name, val, hidden)
         if text == "(":
             inner = self.sum()
             close = self.take()
@@ -573,3 +584,260 @@ def random_lingo(seed: Optional[int] = None, shape: Optional[str] = None) -> str
         t = rng.choice(names)
         prob.asks = [Ask("current", t), Ask("voltage", t)]
     return to_lingo(prob)
+
+
+# ---------------------------------------------------------------------------
+# 6. Plain English -> lingo  (rules only - no AI; every sentence gives the same lingo)
+# ---------------------------------------------------------------------------
+#
+#   "12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm,
+#    then a 3 ohm. Find the current through and the voltage across the 2 ohm."
+#
+# Sentences are cut into clauses (commas, periods, "then", "and that ...").  Each clause is
+# one of: the battery, a connection ("... in series", "... in parallel with ..."), a note that
+# a resistor is unknown, or a question ("find ...").  A clause that refers back ("that pair",
+# "them", "the combination") attaches its resistors to everything built so far.
+# Anything the rules cannot read raises a LingoError that names the exact word.
+
+_NUMWORD = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+            "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+            "fifty": 50, "hundred": 100, "thousand": 1000}
+_NUMWORD_RE = re.compile(r"\b(" + "|".join(_NUMWORD) + r")\b(?=\s*-?\s*(?:k\b|kilo|ohm|Ω|\u2126|volt|v\b|\d))", re.I)
+_UNIT = r"(?:\s*-?\s*(?:k(?:ilo)?)?\s*-?\s*(?:ohms?|Ω|\u2126))"
+_VALUE = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)(?:\s*-?\s*(k)(?:ilo)?(?:\s*-?\s*(?:ohms?|Ω|\u2126))?\b"
+                    r"|\s*-?\s*(?:ohms?|Ω|\u2126)\b)?", re.I)
+_VOLTS = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)\s*-?\s*(?:v|volts?)\b", re.I)
+_SEP = re.compile(r"(,|;|\.(?!\d)|:|\bthen\b|\bfollowed\s+by\b|\bnext\b|\bfinally\b|\bafter\s+that\b|\band\s+(?=(?:that|this|"
+                  r"those|these|them|both|the\s+(?:pair|group|combination|combo|set|branch|network|whole)|find|determine|"
+                  r"calculate|compute|what|ask|all\b)))", re.I)
+_THEN = re.compile(r"then|followed\s+by|next|finally|after\s+that", re.I)
+_REF = re.compile(r"\b(?:that|this|those|these|the)\s+(?:pair|group|combination|combo|set|branch|network|whole(?:\s+\w+)?|"
+                  r"two|three|four|result|circuit\s+so\s+far)\b|\b(?:them|both)\b|^\s*(?:and\s+)?(?:that|this|those|these)\b"
+                  r"|\b(?:with|to|across|and)\s+(?:that|this|those|these)\b", re.I)
+_OP = re.compile(r"\b(series|parallel|across)\b", re.I)
+_ASK_VERB = re.compile(r"\b(find|determine|calculate|compute|evaluate|solve|ask|asks|asked|question|what|how\s+much|"
+                       r"work\s+out|give|students?)\b", re.I)
+_QUANT_RE = re.compile(r"equivalent(?:\s+resistance)?|total\s+resistance|r_?eq\b|total\s+current|battery\s+current|"
+                       r"current(?:\s+(?:from|drawn|supplied|leaving|delivered))?|voltage|potential(?:\s+difference)?|"
+                       r"power|dissipat\w*", re.I)
+_HIDE_VERB = re.compile(r"\b(is|are|be|being|as|mark(?:ed)?|label(?:l?ed)?|leave|left|make|made|hide|hidden|call(?:ed)?|"
+                        r"keep|kept|treat(?:ed)?)\b", re.I)
+_FILLER = set("""a an the and with in of to is are be by connected connect connecting connection connections combination
+    combined combine pair group resistor resistors ohm ohms rated each other one another together it its them this that
+    those these all both which whose first second third last also plus battery source supply cell circuit has have
+    having contains containing consisting consists made up wired hooked placed put attached joined join branch branches
+    between ends end set sits sitting lies lying goes going runs running placed then followed next finally after
+    whole thing two three four value valued rating there is are we you i on into from for at as so along chain string
+    unknown identical equal same more resistance""".split())
+
+
+def _clauses(text: str) -> List[Tuple[str, bool]]:
+    """-> [(clause, started_with_then)]"""
+    parts = _SEP.split(text)
+    out, then = [], False
+    for i, p in enumerate(parts):
+        if i % 2:                                   # a separator
+            then = bool(_THEN.fullmatch(p.strip()))
+            continue
+        if p.strip():
+            out.append((p.strip(), then))
+        then = False
+    return out
+
+
+def _tidy(s: str) -> str:
+    s = _NUMWORD_RE.sub(lambda m: str(_NUMWORD[m.group(1).lower()]), s)
+    # "two 4 ohm resistors" / "3 resistors of 6 ohms" -> "4 ohm and 4 ohm" / "6 ohm and 6 ohm and 6 ohm"
+    s = re.sub(r"\b(\d+)\s+(?:identical\s+|equal\s+|more\s+)?(\d+(?:\.\d+)?)(" + _UNIT + r")\s*resistors?\b",
+               lambda m: " and ".join([m.group(2) + m.group(3)] * int(m.group(1))), s, flags=re.I)
+    s = re.sub(r"\b(\d+)\s+(?:identical\s+|equal\s+)?resistors?\s+(?:of|at|rated(?:\s+at)?|each(?:\s+of)?)\s+(\d+(?:\.\d+)?)("
+               + _UNIT + r")(?:\s+each)?", lambda m: " and ".join([m.group(2) + m.group(3)] * int(m.group(1))), s, flags=re.I)
+    s = re.sub(r"\b\d+\s+(?:identical\s+|equal\s+|different\s+)?resistors\b", "resistors", s, flags=re.I)  # bare count
+    s = re.sub(r"\bin\s+parallel\s+with\s+each\s+other\b|\bin\s+parallel\s+together\b", "in parallel", s, flags=re.I)
+    s = re.sub(r"\bin\s+series\s+with\s+each\s+other\b|\bin\s+series\s+together\b", "in series", s, flags=re.I)
+    return s
+
+
+def _ohms(m: "re.Match") -> float:
+    return float(m.group(1)) * (1000 if m.group(2) else 1)
+
+
+def _combine(kind: str, parts: List[Node]) -> Node:
+    items: List[Node] = []
+    for p in parts:
+        if isinstance(p, Group) and p.kind == kind:
+            items.extend(p.items)
+        else:
+            items.append(p)
+    return items[0] if len(items) == 1 else Group(kind, items)
+
+
+def _check_words(clause: str, cleaned: str) -> None:
+    for w in re.findall(r"[A-Za-z]+", cleaned):
+        if w.lower() not in _FILLER:
+            raise LingoError(f"I don't understand the word '{w}' in \"{clause}\". Describe resistors as '4 ohm', join them "
+                             f"with 'in series' / 'in parallel', refer back with 'that pair', and continue with 'then'.")
+
+
+def translate(text: str) -> str:
+    """Plain English -> lingo.  Raises LingoError (naming the word) for anything the rules cannot read."""
+    text = _tidy(" ".join(text.split()))
+    if not text.strip():
+        raise LingoError("Describe the circuit, e.g. '12 V battery, a 4 ohm and a 2 ohm in series, then a 3 ohm'.")
+    volts: Optional[float] = None
+    acc: Optional[Node] = None
+    pending: List[R] = []
+    asks: List[str] = []
+    hides: List[float] = []
+    counter = 0
+
+    def new_r(v: float, hidden: bool = False) -> R:
+        nonlocal counter
+        counter += 1
+        return R(f"R{counter}", v, hidden)
+
+    def flush() -> None:
+        nonlocal acc, pending
+        if not pending:
+            return
+        if len(pending) > 1:
+            vals = _join([fmt_ohms(r.ohms) for r in pending])
+            raise LingoError(f"Say whether {vals} are in series or in parallel.")
+        acc = _combine("series", [acc, pending[0]]) if acc is not None else pending[0]
+        pending = []
+
+    for clause, then in _clauses(text):
+        # 1. the battery
+        for m in _VOLTS.finditer(clause):
+            if volts is not None:
+                raise LingoError(f"Two battery voltages ({volts:g} V and {m.group(1)} V) - use one battery for now.")
+            volts = float(m.group(1))
+        body = _VOLTS.sub(" ", clause)
+        body = re.sub(r"\b(powered|driven|supplied|fed)\s+by\b|\bconnected\s+(?:to|across)\b", " ", body, flags=re.I)
+        # 2. a question
+        if _ASK_VERB.search(body) or (_QUANT_RE.search(body) and not _VALUE.search(_QUANT_RE.sub(" ", body))
+                                      and not re.search(r"\bvolt", body, re.I)):
+            asks.append(body)
+            continue
+        vals = [(m, _ohms(m)) for m in _VALUE.finditer(body)]
+        ops = {o.lower() for o in _OP.findall(body)}
+        ops = {"parallel" if o == "across" else o for o in ops}
+        ref = _REF.search(body)
+        unknown = bool(re.search(r"\bunknown\b|\?", body))
+        # words we do not know -> a readable error naming the word
+        cleaned = _VALUE.sub(" ", body)
+        cleaned = _OP.sub(" ", cleaned)
+        cleaned = _REF.sub(" ", cleaned)
+        cleaned = _HIDE_VERB.sub(" ", cleaned) if unknown else cleaned
+        cleaned = re.sub(r"\bk(?:ilo)?\b|\bohms?\b|\?", " ", cleaned, flags=re.I)
+        _check_words(clause, cleaned)
+        if not vals and not ops and not ref:
+            if unknown:
+                raise LingoError(f"In \"{clause}\": say which resistor is unknown, e.g. 'the 6 ohm is unknown'.")
+            continue                                    # "a battery", "resistors" - nothing to add
+        if len(ops) > 1:
+            raise LingoError(f"\"{clause}\" mixes series and parallel. Use one connection per phrase, separated by commas: "
+                             f"'a 2 ohm and a 3 ohm in series, that pair in parallel with a 6 ohm'.")
+        op = "series" if "series" in ops else "parallel" if "parallel" in ops else None
+        # 3. "the 6 ohm is unknown"  (a note about a resistor already placed)
+        if unknown and vals and not op and not ref and _HIDE_VERB.search(body) and not then:
+            hides.extend(v for _, v in vals)
+            continue
+        hidden_vals = set()
+        if unknown:
+            for m, v in vals:
+                before = body[max(0, m.start() - 30):m.start()]
+                after = body[m.end():m.end() + 40]
+                if len(vals) == 1 or re.search(r"unknown|\?", before + " " + after, re.I):
+                    hidden_vals.add(m.start())
+        rs = [new_r(v, m.start() in hidden_vals) for m, v in vals]
+        # 4. a connection
+        if then:
+            flush()
+        if ref:
+            flush()
+            if acc is None:
+                raise LingoError(f"\"{clause}\" refers back to '{ref.group(0).strip()}' but nothing was described before it.")
+            if op is None:
+                raise LingoError(f"In \"{clause}\": say how '{ref.group(0).strip()}' connects - 'in series with' or "
+                                 f"'in parallel with'.")
+            if not rs:
+                raise LingoError(f"In \"{clause}\": give the resistor that joins '{ref.group(0).strip()}', e.g. "
+                                 f"'that pair in parallel with a 6 ohm'.")
+            new = _combine(op, rs) if len(rs) > 1 and op else rs[0] if len(rs) == 1 else _combine(op, rs)
+            values_first = vals[0][0].start() < ref.start()
+            acc = _combine(op, [new, acc] if values_first else [acc, new])
+        elif op and rs:
+            group_rs: List[Node] = list(pending) + list(rs) if pending else list(rs)
+            pending = []
+            if len(group_rs) == 1:
+                if acc is None:
+                    raise LingoError(f"In \"{clause}\": '{op}' needs at least two resistors, e.g. '4 and 2 in {op}'.")
+                acc = _combine(op, [acc, group_rs[0]])       # "then a 6 ohm in parallel" = with everything so far
+            else:
+                grp = _combine(op, group_rs)
+                acc = _combine("series", [acc, grp]) if acc is not None else grp
+        elif op:
+            if len(pending) < 2:
+                raise LingoError(f"In \"{clause}\": '{op}' needs at least two resistors before it, e.g. '4, 2 and 6 in {op}'.")
+            grp = _combine(op, list(pending))
+            pending = []
+            acc = _combine("series", [acc, grp]) if acc is not None else grp
+        else:
+            pending.extend(rs)
+    flush()
+    if acc is None:
+        raise LingoError("Describe the resistors, e.g. 'a 4 ohm and a 2 ohm in series, then a 3 ohm'.")
+    if volts is None:
+        raise LingoError("Say the battery voltage, e.g. '12 V battery' or 'a 6 volt source'.")
+    prob = Problem(volts, acc)
+    for i, r in enumerate(prob.resistors(), 1):        # names follow reading order, like parse() does
+        r.name = f"R{i}"
+    for v in hides:
+        hits = [r for r in prob.resistors() if abs(r.ohms - v) < 1e-9]
+        if not hits:
+            raise LingoError(f"There is no {fmt_ohms(v)} resistor to mark unknown.")
+        if len(hits) > 1:
+            raise LingoError(f"Several resistors are {fmt_ohms(v)} ({', '.join(r.name for r in hits)}) - say which one is "
+                             f"unknown using its name, e.g. 'hide: {hits[0].name}' in the lingo.")
+        hits[0].hidden = True
+    for a in asks:
+        prob.asks.extend(_translate_ask(a, prob))
+    return to_lingo(prob)
+
+
+def _translate_ask(clause: str, prob: Problem) -> List[Ask]:
+    out: List[Ask] = []
+    quants = list(_QUANT_RE.finditer(clause))
+    if not quants:
+        raise LingoError(f"In \"{clause}\": say what to find - current through, voltage across, power in, total current, "
+                         f"or equivalent resistance.")
+    targets = [(m.start(), f"the {m.group(1)} {'k' if m.group(2) else ''}ohm resistor") for m in _VALUE.finditer(clause)
+               if re.search(r"ohm|Ω|\u2126", clause[m.start():m.end()], re.I)]
+    targets += [(m.start(), m.group(0)) for m in re.finditer(r"\bR\d+\b", clause)]
+    targets.sort()
+    every = re.search(r"\b(each|every|all)\b", clause, re.I)
+    for q in quants:
+        word = q.group(0).lower()
+        if word.startswith(("equivalent", "total resistance", "req", "r_eq")):
+            out.append(Ask("req"))
+            continue
+        if word.startswith(("total", "battery")) or re.match(r"current\s+\w", word):
+            out.append(Ask("total_current"))
+            continue
+        phrase = ("current through" if word.startswith("current") else
+                  "voltage across" if word.startswith(("voltage", "potential")) else "power in")
+        after = [t for t in targets if t[0] > q.end()]
+        tgt = after[0][1] if after else targets[-1][1] if targets else None
+        if tgt is None:
+            if every:
+                out.extend(Ask(_parse_ask(f"{phrase} {r.name}", prob).quantity, r.name) for r in prob.resistors())
+                continue
+            raise LingoError(f"In \"{clause}\": say which resistor, e.g. '{phrase} the 2 ohm resistor' or '{phrase} R2'.")
+        out.append(_parse_ask(f"{phrase} {tgt}", prob))
+    seen, unique = set(), []                        # "power dissipated" matches twice - keep one
+    for a in out:
+        if (a.quantity, a.target) not in seen:
+            seen.add((a.quantity, a.target))
+            unique.append(a)
+    return unique

@@ -255,7 +255,7 @@ with st.sidebar:
     st.caption("Series & parallel resistor problems for Physics 2.")
     st.radio("Resistor symbol", ["US", "IEC"], key="style", horizontal=True, captions=["zig-zag", "box"])
     with st.expander("🤖 Optional: AI translator"):
-        st.caption("Turns loose English into circuit lingo. Everything else works without it.")
+        st.caption("Backup for plain-English sentences the built-in rules cannot read. Everything else works without it.")
         st.selectbox("Service", list(llm.PRESETS), key="ai_preset", on_change=_preset_changed)
         st.text_input("API key", key="ai_key", type="password", placeholder="not needed for Ollama")
         st.text_input("Model", key="ai_model")
@@ -292,18 +292,40 @@ with tab_create:
         text = st.text_area("Circuit lingo", ss.lingo_text, key=f"lingo_{ss.version}", height=150,
                             help="+ = series, || = parallel, ( ) = grouping. See the How to use tab.")
         ss.lingo_text = text
-        with st.expander("Or write it in plain English (needs the AI translator in the sidebar)"):
+        with st.expander("Or write it in plain English", expanded=bool(ss.get("last_translation"))):
             english = st.text_area("Plain English", height=80, key="english",
-                                   placeholder="12 V battery, 4 and 2 in series, that pair in parallel with 6, then 3; "
-                                               "ask for the current in the 2 ohm")
+                                   placeholder="12 V battery, a 4 ohm and a 2 ohm in series, that pair in parallel "
+                                               "with a 6 ohm, then a 3 ohm. Find the current through the 2 ohm.")
             client = get_client()
-            if st.button("Translate to lingo", disabled=client is None or not english.strip()):
+            if st.button("Translate to lingo", type="primary", disabled=not english.strip()):
                 try:
-                    set_text(english_to_lingo(client, english))
+                    result, how = lingo.translate(english), "rules"
+                except lingo.LingoError as rule_error:
+                    if client is None:
+                        st.error(str(rule_error))
+                        result = None
+                    else:
+                        try:
+                            result, how = english_to_lingo(client, english), "AI"
+                        except (llm.LLMError, lingo.LingoError) as e:
+                            st.error(f"{rule_error}\n\nThe AI translator could not help either: {e}")
+                            result = None
+                if result:
+                    ss.last_translation = {"english": english, "lingo": result, "how": how}
+                    set_text(result)
                     st.rerun()
-                except (llm.LLMError, lingo.LingoError) as e:
-                    st.error(str(e))
-            st.caption("The result is shown in the lingo box so you can check it - and learn the lingo.")
+            if ss.get("last_translation"):
+                lt = ss.last_translation
+                st.markdown("**Translated to lingo** " + ("(by the rules, no AI)" if lt["how"] == "rules"
+                                                          else "(by the AI helper - check it)"))
+                st.code(lt["lingo"], language="text")
+                st.caption("This is what the lingo box now holds. Same words next time give the same lingo. "
+                           "Phrases the rules know: *in series (with)*, *in parallel (with)*, *across*, *that pair*, "
+                           "*then*, *unknown*, *find the current through / voltage across / power in ...*")
+            else:
+                st.caption("Plain sentences are turned into lingo by fixed rules (no AI). The lingo is shown here "
+                           "and put in the box above, so you can check it and learn it. The optional AI translator "
+                           "in the sidebar only steps in for sentences the rules cannot read.")
 
         try:
             built = build(text, ss.style)
