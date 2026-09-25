@@ -53,3 +53,12 @@ def test_unreadable_sentence_shows_the_word(at):
     at.run()
     assert not at.exception
     assert any("thermistor" in e.value for e in at.error)
+
+
+def test_key_instructions_follow_the_selected_service(at):
+    text = " ".join(m.value for m in at.sidebar.markdown)
+    assert "console.anthropic.com" in text and "Create Key" in text
+    at.sidebar.selectbox(key="ai_preset").select("Google Gemini (free tier available)")
+    at.run()
+    text = " ".join(m.value for m in at.sidebar.markdown)
+    assert "aistudio.google.com" in text and "console.anthropic.com" not in text and not at.exception

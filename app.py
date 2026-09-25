@@ -43,6 +43,33 @@ DOCS = {
 st.set_page_config(page_title="Test Circuit Generator", page_icon="⚡", layout="wide")
 
 DEFAULT_TYPE = "Mixed series-parallel"
+KEY_SAFETY = ("Treat the key like a password: don't share it or put it in documents. The app does not save it, "
+              "so paste it again on your next visit.")
+KEY_HELP = {       # shown under the AI translator settings, for the service that is selected
+    "Anthropic (Claude)": """1. Go to [console.anthropic.com](https://console.anthropic.com) and sign up (email or Google account).
+2. Open **Settings → Billing** and add a little credit. $5 lasts a very long time here: each translation costs a
+   fraction of a cent. You can also set a monthly spending limit there.
+3. Open **Settings → API Keys**, click **Create Key**, give it a name, and copy it. It starts with `sk-ant-` and is
+   shown only once.
+4. Paste it into **API key** above and press Enter. The box turns to **AI ready**.""",
+    "OpenAI": """1. Go to [platform.openai.com](https://platform.openai.com) and sign in. A ChatGPT account works, but a ChatGPT
+   subscription does not include API use.
+2. Open **Settings → Billing** and add a little credit ($5 lasts a very long time here).
+3. Open [platform.openai.com/api-keys](https://platform.openai.com/api-keys), click **Create new secret key**, and
+   copy it. It starts with `sk-` and is shown only once.
+4. Paste it into **API key** above and press Enter. The box turns to **AI ready**.""",
+    "Google Gemini (free tier available)": """1. Go to [aistudio.google.com](https://aistudio.google.com) and sign in with a Google account.
+2. Click **Get API key**, then **Create API key**, and copy it. It starts with `AIza`.
+3. Paste it into **API key** above and press Enter. The box turns to **AI ready**.
+
+No credit card is needed: the free tier allows plenty of translations per day for this app. On the free tier Google
+may use what you send to improve its products, so leave student names out of your sentences.""",
+    "Ollama (free, runs on this computer)": """Works with the desktop version of this app only (the web version cannot
+reach your computer). Install Ollama from [ollama.com](https://ollama.com), then run `ollama pull llama3.1` once in a
+terminal. No key is needed.""",
+    "Other OpenAI-compatible service": """Ask your provider for an API key, its base URL and a model name, and fill in
+the three boxes above.""",
+}
 CUSTOM = "Custom (your own sentence)"         # shown when the problem did not come from the random generator
 TYPE_OPTIONS = list(lingo.PROBLEM_TYPES) + [CUSTOM]
 ENGLISH_EXAMPLES = {
@@ -389,6 +416,12 @@ with st.sidebar:
         st.text_input("Model", key="ai_model")
         st.text_input("Base URL", key="ai_base")
         st.success("AI ready") if get_client() else st.info("No AI connected")
+        st.markdown(f"**🔑 How to get a key: {ss.ai_preset}**")
+        st.markdown(KEY_HELP[ss.ai_preset])
+        if not ss.ai_preset.startswith("Ollama"):
+            st.caption(KEY_SAFETY)
+        if not ss.ai_preset.startswith("Google"):
+            st.caption("Want a free option? Choose **Google Gemini** under Service.")
     if st.button("🎓 Replay the get-started tour", width="stretch"):
         ss.tour_step, ss.open_tour = 0, True
 
@@ -569,7 +602,8 @@ with tab_help:
    change the sentence and it is translated again, or fix the lingo directly (the figure always follows the lingo).
 4. **If the rules can't read a sentence**, the message names the word. With the **AI translator** connected in the
    sidebar, the AI rewrites the sentence as lingo instead; the lingo opens so you can check it. The AI's lingo still
-   goes through the same parser and solver, so the figure and answers are never made up.
+   goes through the same parser and solver, so the figure and answers are never made up. See
+   *The AI translator (optional)* below for how to connect it.
 5. **➕ Add to problem set**, then download the questions and worked solutions as a PDF from the
    **Questions & Solutions** tab.
 
@@ -661,6 +695,20 @@ In a sentence it is the same: parts are drawn in the order you describe them.
             st.toast("Loaded - see the Create tab.", icon="✏️")
             st.rerun()
     st.markdown(f"""
+### The AI translator (optional)
+The app works fully without AI. The AI translator only helps with sentences the rules cannot read, and it needs an
+**API key**: a password-like code from an AI company that lets this app use their AI on your account.
+
+1. Open the sidebar (the `>>` arrow at the top left on a narrow screen) and expand **🤖 AI translator**.
+2. Choose a **Service**. **Google Gemini** has a free tier with no credit card; **Anthropic (Claude)** and **OpenAI**
+   need a little prepaid credit (each translation costs a fraction of a cent).
+3. Follow the **How to get a key** steps shown under the boxes for that service, then paste the key into **API key**
+   and press Enter. The box turns to **AI ready**.
+4. Type sentences as usual. The AI is only called when the rules fail; you will see *Translated by the AI helper*,
+   and the circuit lingo opens so you can check it. Already typed a sentence that failed? Click **↻ Translate**.
+
+The key is not saved: paste it again on your next visit. Treat it like a password.
+
 ### What code does what (and where to read more)
 | Step | Code | Documentation |
 |---|---|---|
