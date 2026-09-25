@@ -10,9 +10,12 @@ circuit: (4 + 2) || 6 + 3
 ask: current through R2, voltage across R2
 ```
 
-`+` = series, `||` = parallel (binds tighter, like ×), parentheses group. Resistors are numbered in the
+`+` = series, `||` = parallel (binds tighter, like ×), parentheses group. Parts are numbered in the
 order written; the first parts go on the top rail, the last series part on the bottom rail, parallel branches
-stack top to bottom. Full guide in the app's **How to use** tab.
+stack top to bottom. `4uF` is a capacitor, `S1=closed` a switch, `A1` an ammeter, `6 || V1` a voltmeter across
+the 6 Ω; `6?` hides a value on the figure. Plain English works too ("a 4 ohm and a 2 ohm in series, that pair
+in parallel with a 6 ohm, then a 3 ohm; find the current through the 2 ohm") - fixed rules turn it into lingo,
+no AI. Full guide in the app's **How to use** tab.
 
 ## Use it in a browser (no install)
 
@@ -41,14 +44,17 @@ The optional AI translator is the one feature meant for the desktop version.
 | `site/index.html`, `build_site.sh` | the GitHub Pages build (stlite); deployed by `.github/workflows/pages.yml` on every push to `main` |
 
 ## Features
-- Random problem button (six Physics-2 arrangements, nice values)
+- Resistors, capacitors, switches (open/closed) and ideal meters, solved in DC steady state by series/parallel
+  reduction with the worked steps a student would write (Q = CV, U = ½CV², meter readings, open/shorted branches)
+- Plain-English sentences translated to lingo by fixed rules; the generated lingo is always shown
+- Random problem button (ten arrangements, nice values)
 - Figure export as PNG, JPEG, PDF, SVG; lingo export to reload later
 - Questions & Solutions tab → two-part exam PDF
 - "What code made this?" expander showing the exact Schemdraw script, with documentation links
 - Optional AI translator (Claude, OpenAI, Gemini, or free local Ollama) whose output is always shown for checking
 
 ## Roadmap
-- Capacitors, switches, meters, multi-battery loops (the JSON-spec engine in `circuit_core.py` already solves these)
+- RC time constants, multi-battery loops and bridges (the JSON-spec engine in `circuit_core.py` already solves loops)
 - Upload a photo of an existing figure and generate a variation
 
 ## Built with

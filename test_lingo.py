@@ -104,11 +104,12 @@ def test_translate_unknown_and_questions():
 @pytest.mark.parametrize("english, frag", [
     ("12 V battery, a 4 ohm and a 2 ohm in series with a 6 ohm in parallel", "mixes series and parallel"),
     ("12 V battery, a 4 ohm and a 2 ohm", "in series or in parallel"),
-    ("12 V battery, 4 and 2 in series, then a capacitor", "'capacitor'"),
+    ("12 V battery, 4 and 2 in series, then a capacitor", "give the capacitor a value"),
+    ("12 V battery, 4 and 2 in series, then a thermistor", "'thermistor'"),
     ("a 4 ohm and a 2 ohm in series", "battery voltage"),
     ("12 V battery, that pair in parallel with a 6 ohm", "nothing was described before"),
     ("12 V battery, a 6 ohm and a 6 ohm in parallel, the 6 ohm is unknown", "Several resistors are 6.00"),
-    ("12 V battery, 4 and 2 in series. Find the current.", "say which resistor"),
+    ("12 V battery, 4 and 2 in series. Find the current.", "say which part"),
     ("12 V battery, 4 and 2 in series. Find the mass of the 4 ohm", "say what to find"),
     ("12 V and 6 V batteries, 4 and 2 in series", "one battery"),
     ("", "Describe the circuit"),
@@ -135,3 +136,121 @@ def test_translated_problems_round_trip():
     for en in (EN1, EN2):
         t = lingo.translate(en)
         assert lingo.to_lingo(lingo.parse(t)) == t
+
+
+# ---------------------------------------------------------------------------
+# capacitors, switches and meters (DC steady state).  Hand-worked answers.
+# ---------------------------------------------------------------------------
+
+def test_capacitor_network_hand_worked():
+    # C2 || C3 = 8 µF; in series with C1 = 4 µF -> C_eq = 8/3 µF; Q = C_eq V = 32 µC; V1 = Q/C1 = 8 V; V23 = 4 V
+    p = lingo.parse("source: 12 V\ncircuit: 4uF + 2uF || 6uF\nask: charge on C1, voltage across C2, energy in C1, "
+                    "equivalent capacitance")
+    r = lingo.solve(p)
+    assert r.total_current == 0 and r.req == lingo.INF
+    assert r.ceq == pytest.approx(8e-6 / 3)
+    assert r.per["C1"]["charge"] == pytest.approx(32e-6) and r.per["C1"]["voltage"] == pytest.approx(8)
+    assert r.per["C2"]["voltage"] == pytest.approx(4) and r.per["C3"]["charge"] == pytest.approx(24e-6)
+    assert r.per["C1"]["energy"] == pytest.approx(0.5 * 4e-6 * 64)
+    assert lingo.answers(p, r) == ["Charge on C1 = 32.00 µC", "Voltage across C2 = 4.00 V",
+                                   "Energy stored in C1 = 128.00 µJ", "Equivalent capacitance = 2.67 µF"]
+    assert "share the same charge" in " ".join(r.back)
+
+
+def test_rc_steady_state_capacitor_branch_is_open():
+    # the 4 Ω + C branch carries no current: circuit is 6 + 3 = 9 Ω, I = 4/3 A, 8 V across the parallel group -> on C
+    p = lingo.parse("source: 12 V\ncircuit: (4 + 2uF) || 6 + 3\nask: charge on C1, current through R1")
+    r = lingo.solve(p)
+    assert r.req == pytest.approx(9) and r.total_current == pytest.approx(4 / 3)
+    assert r.per["R1"]["current"] == 0 and r.per["R1"]["voltage"] == 0
+    assert r.per["C1"]["voltage"] == pytest.approx(8) and r.per["C1"]["charge"] == pytest.approx(16e-6)
+    # capacitor in parallel with a resistor: charged to that resistor's voltage
+    r = lingo.solve(lingo.parse("source: 12 V\ncircuit: 4 + 2uF || 6 + 3"))
+    assert r.req == pytest.approx(13) and r.per["C1"]["voltage"] == pytest.approx(12 * 6 / 13)
+
+
+def test_switch_open_and_closed():
+    open_ = lingo.solve(lingo.parse("source: 12 V\ncircuit: (4 + S1=open) || 6 + 3"))
+    assert open_.req == pytest.approx(9) and open_.per["R1"]["current"] == 0
+    assert open_.per["S1"]["voltage"] == pytest.approx(8)            # the open switch takes the branch voltage
+    closed = lingo.solve(lingo.parse("source: 12 V\ncircuit: (4 + S1=open) || 6 + 3\nswitch: S1 closed"))
+    assert closed.req == pytest.approx(5.4) and closed.total_current == pytest.approx(12 / 5.4)
+    assert closed.per["R1"]["current"] == pytest.approx(16 / 3 / 4) and closed.per["S1"]["voltage"] == 0
+    assert "S1 is closed." in lingo.question_text(lingo.parse("source: 12 V\ncircuit: (4 + S1=closed) || 6 + 3"))
+    # a closed switch across a resistor shorts it
+    r = lingo.solve(lingo.parse("source: 12 V\ncircuit: 4 || S1=closed + 3"))
+    assert r.req == pytest.approx(3) and r.per["R1"]["current"] == 0 and r.per["S1"]["current"] == pytest.approx(4)
+    # open switch in the only path: nothing flows, the battery voltage sits across the switch
+    r = lingo.solve(lingo.parse("source: 12 V\ncircuit: 4 + S1=open"))
+    assert r.total_current == 0 and r.per["S1"]["voltage"] == pytest.approx(12)
+
+
+def test_meters_read_current_and_voltage():
+    p = lingo.parse("source: 12 V\ncircuit: A1 + (4 + 2) || 6 + 3 || V1\nask: reading of A1, reading of the voltmeter")
+    r = lingo.solve(p)
+    assert r.req == pytest.approx(6) and r.per["A1"]["reading"] == pytest.approx(2)
+    assert r.per["V1"]["reading"] == pytest.approx(6) and r.per["V1"]["current"] == 0
+    assert lingo.answers(p, r) == ["A1 reads 2.00 A", "V1 reads 6.00 V"]
+    r = lingo.solve(lingo.parse("source: 12 V\ncircuit: (A2 + 4 + 2) || 6 + 3"))
+    assert r.per["A2"]["reading"] == pytest.approx(1)
+
+
+@pytest.mark.parametrize("bad, frag", [
+    ("source: 12 V\ncircuit: A1 + S1=closed", "short-circuited"),
+    ("source: 12 V\ncircuit: 4 + 2\nask: charge on R1", "charge and stored energy apply to capacitors"),
+    ("source: 12 V\ncircuit: 4 + 2\nask: reading of R1", "not a meter"),
+    ("source: 12 V\ncircuit: 4 + 2\nask: reading of the ammeter", "no ammeter"),
+    ("source: 12 V\ncircuit: 4 + A1=closed", "only makes sense after a switch"),
+    ("source: 12 V\ncircuit: 4 + S1\nswitch: R1 closed", "not a switch"),
+])
+def test_part_errors_are_readable(bad, frag):
+    with pytest.raises(lingo.LingoError, match=frag):
+        lingo.solve(lingo.parse(bad))
+
+
+def test_units_words_and_round_trip_for_new_parts():
+    p = lingo.parse("source: 12 V\ncircuit: 4 microfarad + 2 µF || 470 nF + switch + ammeter\nask: charge on the 4 uF capacitor")
+    assert [(q.kind, q.name) for q in p.parts()] == [("C", "C1"), ("C", "C2"), ("C", "C3"), ("S", "S1"), ("A", "A1")]
+    assert p.asks[0].target == "C1" and p.parts()[2].value == pytest.approx(470e-9)
+    t = "source: 12 V\ncircuit: (4 + S1=closed) || 6 + 3 || 2uF\nask: current through R1, charge on C1"
+    assert lingo.to_lingo(lingo.parse(t)) == t
+    for shape in ("capacitors", "switch", "meters"):
+        for seed in range(15):
+            t = lingo.random_lingo(seed, shape)
+            p = lingo.parse(t)
+            assert lingo.to_lingo(lingo.parse(lingo.to_lingo(p))) == t
+            lingo.solve(p); lingo.draw_code(p); lingo.question_text(p)
+
+
+def test_draw_code_uses_the_right_symbols():
+    code = lingo.draw_code(lingo.parse("source: 12 V\ncircuit: A1 + (4 + S1=closed) || 2uF + 3 || V1"))
+    assert "elm.MeterA()" in code and "elm.MeterV()" in code and "elm.Capacitor()" in code
+    assert "elm.Switch(nc=True)" in code and "(closed)" in code
+    assert "elm.Switch()" in lingo.draw_code(lingo.parse("source: 12 V\ncircuit: 4 + S1=open"))
+
+
+@pytest.mark.parametrize("english, lines", [
+    ("12 V battery, a 4 microfarad and a 2 microfarad capacitor in series, that pair in parallel with a 6 uF. "
+     "Find the charge on the 4 uF capacitor and the equivalent capacitance.",
+     "circuit: (4uF + 2uF) || 6uF\nask: charge on C1, equivalent capacitance"),
+    ("12 V battery, a 4 ohm in series with a closed switch, that pair in parallel with a 6 ohm, then a 3 ohm. "
+     "Find the current through the 4 ohm.", "circuit: (4 + S1=closed) || 6 + 3\nask: current through R1"),
+    ("12 V battery, a 4 ohm and an open switch in series, that pair in parallel with a 6 ohm, then a 3 ohm. "
+     "The switch is closed. Find the total current.", "circuit: (4 + S1=closed) || 6 + 3\nask: total current"),
+    ("12 V battery, an ammeter, then a 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, then a 3 ohm, "
+     "a voltmeter across the 3 ohm. What does the ammeter read and what does the voltmeter read?",
+     "circuit: A1 + (4 + 2) || 6 + 3 || V1\nask: reading of A1, reading of V1"),
+    ("6 V battery, a 3 uF and a 6 uF in parallel, then a 2 uF in series with that pair. What is the energy stored in "
+     "each capacitor?", "circuit: 2uF + 3uF || 6uF\nask: energy in C1, energy in C2, energy in C3"),
+    ("12 V battery, capacitors of 4 and 6 microfarads in series, a voltmeter across that pair",
+     "circuit: (4uF + 6uF) || V1"),
+])
+def test_translate_new_parts(english, lines):
+    assert lines in lingo.translate(english)
+
+
+def test_translate_new_part_errors():
+    with pytest.raises(lingo.LingoError, match="capacitor units"):
+        lingo.translate("12 V battery, capacitors of 4 and 6 in series")
+    with pytest.raises(lingo.LingoError, match="what the voltmeter is across"):
+        lingo.translate("12 V battery, 4 and 2 in series, then a voltmeter")

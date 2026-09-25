@@ -49,6 +49,11 @@ EXAMPLES = {
     "Simple parallel": "source: 12 V\ncircuit: 3 || 6 || 9\nask: equivalent resistance, total current",
     "Unknown resistor": "source: 24 V\ncircuit: 4 + 12 || 6 + 4\nask: current through R3\nhide: R3\n"
                         "text: The battery supplies 2.00 A. Find the current through R3.",
+    "Capacitors": "source: 12 V\ncircuit: 4uF + 2uF || 6uF\nask: charge on C1, voltage across C2, equivalent capacitance",
+    "Switch (RC steady state)": "source: 12 V\ncircuit: (4 + S1=closed) || 6 + 3 || 2uF\n"
+                                "ask: current through R1, charge on C1\ntext: The switch has been closed a long time. "
+                                "Find the current through the 4.00 Ω resistor and the charge on the capacitor.",
+    "Meters": "source: 12 V\ncircuit: A1 + (4 + 2) || 6 + 3 || V1\nask: reading of A1, reading of V1",
 }
 ENGLISH_EXAMPLES = {
     "Worksheet problem 1": "12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, then a "
@@ -59,6 +64,11 @@ ENGLISH_EXAMPLES = {
                          "resistance.",
     "Unknown resistor": "24 V battery, a 4 ohm in series with a 12 ohm, then an unknown 6 ohm. What is the voltage "
                         "across each resistor?",
+    "Capacitors": "12 V battery, a 4 microfarad and a 2 microfarad capacitor in series, that pair in parallel with a "
+                  "6 uF. Find the charge on the 4 uF capacitor and the equivalent capacitance.",
+    "Switch and meters": "12 V battery, an ammeter, then a 4 ohm in series with a closed switch, that pair in parallel "
+                         "with a 6 ohm, then a 3 ohm, a voltmeter across the 3 ohm. What does the ammeter read, and "
+                         "what does the voltmeter read?",
 }
 
 
@@ -214,7 +224,8 @@ TOUR = [
                                   "Press **Translate to lingo**. Fixed rules (no AI) turn it into lingo, show you the "
                                   "result and put it in the box, so you learn the lingo as you go. Words the rules "
                                   "know: *in series with*, *in parallel with*, *across*, *that pair*, *then*, "
-                                  "*unknown*, *find the current through / voltage across / power in ...*. "
+                                  "*unknown*, *a 4 uF capacitor*, *a closed switch*, *an ammeter*, *a voltmeter across ...*, "
+                                  "*find the current through / voltage across / charge on / reading of ...*. "
                                   "A word they don't know is named in the error message."),
     ("Done", "The full guide is in the **How to use** tab, with links to the Schemdraw documentation and the exact "
              "code behind each figure. Replay this tour any time from the sidebar."),
@@ -452,14 +463,24 @@ with tab_help:
 | `circuit: R3=6 + 2` | give a resistor your own name |
 | `circuit: 2 kohm + 470` | values may carry k / kΩ; bare numbers are ohms |
 | `circuit: 4 + 6? + 3` | `?` after a value (or the word **unknown** before it) prints "R2 = ?" on the figure; the answer key still knows it is 6 Ω |
+| `circuit: 4uF + 2uF \\|\\| 6uF` | a value with a farad unit (`F`, `mF`, `uF`/`µF`, `nF`, `pF`) is a **capacitor**, named C1, C2 ... |
+| `circuit: (4 + S1=closed) \\|\\| 6` | a **switch**: `S1=open` or `S1=closed` (a `switch: S1 closed` line also works) |
+| `circuit: A1 + 4 \\|\\| V1` | **meters**: `A1` an ammeter in series (a wire), `V1` a voltmeter in parallel with the part it measures (an open branch) |
 | `ask: current through R2` | also `voltage across R2`, `power in R2`, `total current`, `equivalent resistance`, or `the 2 ohm resistor` |
+| `ask: charge on C1` | capacitors: `charge on C1`, `energy in C1`, `voltage across C1`, `equivalent capacitance`; meters: `reading of A1`, `reading of the voltmeter` |
 | `hide: R3` | the other way to print "R3 = ?" on the figure |
 | `text: ...` | your own wording of the question instead of the automatic one |
 | `title: Quiz 3` | a title kept with the problem |
 
 Dictation-friendly words work on the circuit line too: **plus**, **in series with**, **then**, **followed by** for `+`;
-**parallel**, **in parallel with**, **across**, **with** for `||`; **unknown** for `?`; **ohm(s)**, **kohm**, **volt(s)**.
+**parallel**, **in parallel with**, **across**, **with** for `||`; **unknown** for `?`; **ohm(s)**, **kohm**, **microfarad**,
+**volt(s)**; **switch**, **ammeter**, **voltmeter** for `S`, `A`, `V`.
 So `4 in series with 2 in parallel with 6 then 3` is read as `4 + 2 || 6 + 3` (the usual `||`-first precedence applies).
+
+**The physics used:** one battery, DC, steady state ("the switch has been closed a long time"). Capacitors carry no
+current and hold the voltage across them (Q = CV, U = ½CV²); a closed switch and an ideal ammeter are wires (0 Ω);
+an open switch and an ideal voltmeter are open branches. Capacitors in series share the same charge; in parallel they
+share the same voltage.
 
 ### Plain English (no AI needed)
 
@@ -480,6 +501,11 @@ Fixed rules read it, show the lingo they produced, and put it in the lingo box. 
 | **Find** the current through **and** the voltage across the 2 ohm resistor | `ask: current through R2, voltage across R2` |
 | **What is** the power in R3 · **Calculate** the total current · the equivalent resistance | `ask: power in R3` · `ask: total current` · `ask: equivalent resistance` |
 | the voltage across **each** resistor | one `voltage across` ask per resistor |
+| a 4 **microfarad** and a 2 **uF** capacitor in series · capacitors of 4 and 6 uF | `4uF + 2uF` · `4uF + 6uF` |
+| a 4 ohm in series with a **closed switch** · an **open switch** · the switch **is closed** | `4 + S1=closed` · `S1=open` · changes the switch already described |
+| an **ammeter**, then ... · a **voltmeter across** the 3 ohm · a voltmeter across that pair | `A1 + ...` · `3 \\|\\| V1` · `(...) \\|\\| V1` |
+| the **charge on** the 4 uF · the **energy stored in** C1 · the **equivalent capacitance** | `ask: charge on C1` · `ask: energy in C1` · `ask: equivalent capacitance` |
+| **what does the ammeter read** · the **reading of** the voltmeter | `ask: reading of A1` · `ask: reading of V1` |
 
 One connection per phrase: write "a 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm" rather than
 "4 and 2 in series with 6 in parallel". A word the rules do not know stops the translation with a message naming that word,
@@ -523,8 +549,8 @@ To move a resistor, move it in the text: `3 + (4 + 2) || 6` puts the 3 Ω on the
 | Random problems | `lingo.random_lingo` - six Physics-2 arrangements, values from a fixed pool | - |
 | Optional AI | `llm.py` translates English → lingo; the result is always shown for checking | - |
 
-**Limits (for now):** DC circuits with one battery and resistors only. Capacitors, switches, meters and
-multi-battery loops are next on the list. Uploading a photo of an existing figure and getting a variation is planned.
+**Limits (for now):** DC circuits with one battery, in steady state: resistors, capacitors, switches and ideal meters.
+Not yet: RC time constants, multi-battery loops, bridges. Uploading a photo of an existing figure and getting a variation is planned.
 """)
 
 # ---------------------------------------------------------------------------
