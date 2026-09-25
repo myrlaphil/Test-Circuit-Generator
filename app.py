@@ -43,6 +43,8 @@ DOCS = {
 st.set_page_config(page_title="Test Circuit Generator", page_icon="⚡", layout="wide")
 
 DEFAULT_TYPE = "Mixed series-parallel"
+CUSTOM = "Custom (your own sentence)"         # shown when the problem did not come from the random generator
+TYPE_OPTIONS = list(lingo.PROBLEM_TYPES) + [CUSTOM]
 ENGLISH_EXAMPLES = {
     "Textbook series-parallel": "12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, "
                                 "then a 3 ohm. Find the current through and the voltage across the 2 ohm resistor.",
@@ -237,9 +239,44 @@ def translate_english(english: str) -> None:
                               "ai": True}
 
 
+def _snapshot() -> Dict[str, Any]:
+    ss = st.session_state
+    return {"english_text": ss.english_text, "lingo_text": ss.get(f"lingo_{ss.version}", ss.lingo_text),
+            "translated_lingo": ss.translated_lingo, "translation": dict(ss.translation)}
+
+
+def type_changed() -> None:
+    """Dropdown callback.  A problem type makes a random problem; leaving Custom keeps the sentence so that
+    choosing Custom again brings it back."""
+    ss = st.session_state
+    if ss.get("last_type") == CUSTOM and ss.problem_type != CUSTOM:
+        ss.custom_backup = _snapshot()
+    ss.last_type = ss.problem_type
+    if ss.problem_type == CUSTOM:
+        if ss.get("custom_backup"):
+            for k, v in ss.custom_backup.items():
+                setattr(ss, k, v)
+            ss.version += 1
+        return
+    load_problem(*lingo.random_problem(ss.problem_type))
+
+
 def new_random() -> None:
-    """A new random problem of the chosen type (the dropdown and the dice button both call this)."""
-    load_problem(*lingo.random_problem(st.session_state.problem_type))
+    """Dice button: another random problem of the chosen type."""
+    ss = st.session_state
+    if ss.problem_type != CUSTOM:
+        load_problem(*lingo.random_problem(ss.problem_type))
+
+
+def mark_custom() -> None:
+    """The problem is now the teacher's own: the dropdown shows Custom from the next widget draw on."""
+    st.session_state._pending_type = CUSTOM
+
+
+def english_changed() -> None:
+    ss = st.session_state
+    translate_english(ss[f"english_{ss.version}"])
+    mark_custom()
 
 
 def retranslate() -> None:
@@ -257,7 +294,8 @@ TOUR = [
                 "then a 3 ohm. Find the current through the 2 ohm resistor.\n\nFixed rules (no AI) turn the sentence "
                 "into **circuit lingo**, the short code the figure and the answers are built from."),
     ("Where things are", "**Create** - pick a **problem type** to get a random problem of that kind (changing the "
-                         "type makes a new one, 🎲 gives another), or write your own sentence. Check the figure and "
+                         "type makes a new one, 🎲 gives another), or write your own sentence (the type then "
+                         "shows **Custom**). Check the figure and "
                          "answers, then **Add to problem set**.\n\n**Questions & Solutions** - your problem set, "
                          "downloaded as a PDF (questions, then worked solutions).\n\n**How to use** - the phrases "
                          "the rules understand, the problem types, and the circuit lingo."),
@@ -303,7 +341,7 @@ def tour_dialog() -> None:
 ss = st.session_state
 if "version" not in ss:
     ss.version = 0
-    ss.problem_type = DEFAULT_TYPE
+    ss.problem_type = ss.last_type = DEFAULT_TYPE
     load_problem(*lingo.random_problem(DEFAULT_TYPE))
     ss.exam = []                       # the problem set: dicts with english, text, question, solution, png, answers
     ss.tour_step = 0
@@ -357,18 +395,23 @@ with tab_create:
     with left:
         st.subheader("1. Describe the circuit")
         t1, t2 = st.columns([0.6, 0.4], vertical_alignment="bottom")
-        t1.selectbox("Problem type", list(lingo.PROBLEM_TYPES), key="problem_type", on_change=new_random,
-                     help="Choosing a type makes a new random problem of that kind. See How to use for what each "
-                          "type contains.")
-        t2.button("🎲 New random problem", on_click=new_random, width="stretch")
-        english = st.text_area("Plain English", ss.english_text, key=f"english_{ss.version}", height=140,
+        if ss.get("_pending_type"):                   # set before the dropdown is drawn (Streamlit rule)
+            ss.problem_type = ss.last_type = ss.pop("_pending_type")
+        t1.selectbox("Problem type", TYPE_OPTIONS, key="problem_type", on_change=type_changed,
+                     help="Choosing a type makes a new random problem of that kind. It switches to Custom by itself "
+                          "when you write or edit your own problem. See How to use for what each type contains.")
+        t2.button("🎲 New random problem", on_click=new_random, width="stretch",
+                  disabled=ss.problem_type == CUSTOM,
+                  help="Pick a problem type first. Your own sentence is never replaced by the dice.")
+        if ss.problem_type == CUSTOM:
+            st.caption("Your own problem. Picking a problem type makes a random one instead; choosing **Custom** "
+                       "again brings this one back.")
+        st.text_area("Plain English", ss.english_text, key=f"english_{ss.version}", height=140,
+                               on_change=english_changed,
                                placeholder="12 V battery, a 4 ohm and a 2 ohm in series, that pair in parallel with a "
                                            "6 ohm, then a 3 ohm. Find the current through the 2 ohm resistor.",
                                help="Press Ctrl+Enter (⌘+Enter on Mac) or click outside the box to translate. "
                                     "The How to use tab lists the phrases the rules understand.")
-        if english != ss.english_text:
-            translate_english(english)
-            st.rerun()
 
         tr = ss.translation
         current_lingo = ss.get(f"lingo_{ss.version}", ss.lingo_text)
@@ -392,6 +435,7 @@ with tab_create:
         with st.expander("Circuit lingo (what the figure is built from; edit here if you prefer)",
                          expanded=tr["how"] in ("AI", "error")):
             text = st.text_area("Circuit lingo", ss.lingo_text, key=f"lingo_{ss.version}", height=130,
+                                on_change=mark_custom,
                                 label_visibility="collapsed")
             ss.lingo_text = text
             st.caption("`+` series · `||` parallel · `( )` group · `4uF` capacitor · `S1=closed` switch · `A1` "
@@ -483,6 +527,7 @@ with tab_exam:
                 k1, k2 = st.columns(2)
                 if k1.button("Edit in Create", key=f"edit{i}"):
                     load_problem(x.get("english", ""), x["text"], x.get("how", "rules"))
+                    mark_custom()
                     ss.translated_lingo = x.get("translated", x["text"])
                     st.toast("Loaded - see the Create tab.", icon="✏️")
                     st.rerun()
@@ -500,7 +545,7 @@ with tab_help:
 ### Quick start
 1. **Pick a problem type** at the top of the Create tab. Changing the type makes a new random problem of that kind;
    **🎲 New random problem** gives another one of the same type.
-2. **Or describe your own circuit** in the **Plain English** box, e.g. *12 V battery, a 4 ohm and a 2 ohm in series,
+2. **Or describe your own circuit** in the **Plain English** box (the problem type switches to **Custom** by itself), e.g. *12 V battery, a 4 ohm and a 2 ohm in series,
    that pair in parallel with a 6 ohm, then a 3 ohm. Find the current through the 2 ohm resistor.* Press Ctrl+Enter
    (⌘+Enter on Mac) or click outside the box. Fixed rules (no AI) turn it into circuit lingo.
 3. **Check it.** Open **Circuit lingo** under the sentence to see what the rules made of it. Edit whichever you prefer:
@@ -520,6 +565,7 @@ with tab_help:
 | Capacitors | three fully charged capacitors: charge, voltage, stored energy or equivalent capacitance |
 | Switch (open or closed) | a resistor with a switch in its branch; the question states whether the switch is open or closed |
 | Meters (ammeter and voltmeter readings) | an ideal **ammeter** (A) in series with the battery measures the total current, and an ideal **voltmeter** (V) connected across one resistor measures that resistor's voltage. Students find what each meter reads. |
+| Custom (your own sentence) | chosen automatically when you type or edit your own problem, so the label always tells you where the problem came from. Any mix of parts works here. Picking a type makes a random problem; choosing Custom again brings your sentence back. |
 
 ### The circuit lingo (under the hood)
 
@@ -594,6 +640,7 @@ In a sentence it is the same: parts are drawn in the order you describe them.
         h1.markdown(f"> {en}")
         if h2.button(f"Use: {name}", key=f"help_en_{name}", width="stretch"):
             translate_english(en)
+            mark_custom()
             st.toast("Loaded - see the Create tab.", icon="✏️")
             st.rerun()
     st.markdown(f"""
