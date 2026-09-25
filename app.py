@@ -50,6 +50,16 @@ EXAMPLES = {
     "Unknown resistor": "source: 24 V\ncircuit: 4 + 12 || 6 + 4\nask: current through R3\nhide: R3\n"
                         "text: The battery supplies 2.00 A. Find the current through R3.",
 }
+ENGLISH_EXAMPLES = {
+    "Worksheet problem 1": "12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, then a "
+                           "3 ohm. Find the current through and the voltage across the 2 ohm resistor.",
+    "Worksheet problem 2": "6 V battery, a 3 ohm and a 6 ohm in parallel, then a 2 ohm in series with that pair, a 6 ohm "
+                           "across that whole group, then a 1 ohm. Calculate the power dissipated in the 3 ohm resistor.",
+    "Three in parallel": "A 9 volt battery with 2, 4 and 6 ohms in parallel. Find the total current and the equivalent "
+                         "resistance.",
+    "Unknown resistor": "24 V battery, a 4 ohm in series with a 12 ohm, then an unknown 6 ohm. What is the voltage "
+                        "across each resistor?",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +208,14 @@ TOUR = [
                           "goes on the bottom rail; parallel branches stack top to bottom in the order you write "
                           "them.\n\nSo `(4 + 2) || 6 + 3` draws 4 and 2 on the upper branch, 6 on the lower branch, "
                           "and 3 on the bottom rail - exactly like a textbook figure."),
+    ("Or just say it in English", "Open **Or write it in plain English** under the lingo box and type a sentence:\n\n"
+                                  "> 12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, "
+                                  "then a 3 ohm. Find the current through the 2 ohm.\n\n"
+                                  "Press **Translate to lingo**. Fixed rules (no AI) turn it into lingo, show you the "
+                                  "result and put it in the box, so you learn the lingo as you go. Words the rules "
+                                  "know: *in series with*, *in parallel with*, *across*, *that pair*, *then*, "
+                                  "*unknown*, *find the current through / voltage across / power in ...*. "
+                                  "A word they don't know is named in the error message."),
     ("Done", "The full guide is in the **How to use** tab, with links to the Schemdraw documentation and the exact "
              "code behind each figure. Replay this tour any time from the sidebar."),
 ]
@@ -318,6 +336,7 @@ with tab_create:
                 lt = ss.last_translation
                 st.markdown("**Translated to lingo** " + ("(by the rules, no AI)" if lt["how"] == "rules"
                                                           else "(by the AI helper - check it)"))
+                st.markdown(f"> {lt['english']}")
                 st.code(lt["lingo"], language="text")
                 st.caption("This is what the lingo box now holds. Same words next time give the same lingo. "
                            "Phrases the rules know: *in series (with)*, *in parallel (with)*, *across*, *that pair*, "
@@ -432,12 +451,39 @@ with tab_help:
 | `circuit: (4 + 2) \\|\\| 6 + 3` | parentheses group: 4 and 2 in series, that pair in parallel with 6, then 3 in series |
 | `circuit: R3=6 + 2` | give a resistor your own name |
 | `circuit: 2 kohm + 470` | values may carry k / kΩ; bare numbers are ohms |
+| `circuit: 4 + 6? + 3` | `?` after a value (or the word **unknown** before it) prints "R2 = ?" on the figure; the answer key still knows it is 6 Ω |
 | `ask: current through R2` | also `voltage across R2`, `power in R2`, `total current`, `equivalent resistance`, or `the 2 ohm resistor` |
-| `hide: R3` | prints "R3 = ?" on the figure (the answer key still knows the value) |
+| `hide: R3` | the other way to print "R3 = ?" on the figure |
 | `text: ...` | your own wording of the question instead of the automatic one |
 | `title: Quiz 3` | a title kept with the problem |
 
-Dictation-friendly words also work: **plus** for `+`, **parallel** or **par** for `||`, **ohm(s)**, **volt(s)**.
+Dictation-friendly words work on the circuit line too: **plus**, **in series with**, **then**, **followed by** for `+`;
+**parallel**, **in parallel with**, **across**, **with** for `||`; **unknown** for `?`; **ohm(s)**, **kohm**, **volt(s)**.
+So `4 in series with 2 in parallel with 6 then 3` is read as `4 + 2 || 6 + 3` (the usual `||`-first precedence applies).
+
+### Plain English (no AI needed)
+
+Under the lingo box, open **Or write it in plain English**, type a sentence and press **Translate to lingo**.
+Fixed rules read it, show the lingo they produced, and put it in the lingo box. The same sentence always gives the same lingo.
+
+| You say | The rules produce |
+|---|---|
+| 12 V battery *(or: a 6 volt source)* | `source: 12 V` |
+| a 4 ohm and a 2 ohm **in series** *(or: a 4 ohm **in series with** a 2 ohm)* | `4 + 2` |
+| a 3 ohm and a 6 ohm **in parallel** · 2, 4 and 6 ohms **in parallel** | `3 \\|\\| 6` · `2 \\|\\| 4 \\|\\| 6` |
+| ..., **that pair** in parallel with a 6 ohm *(also: that group, the combination, them)* | `(4 + 2) \\|\\| 6` |
+| ..., a 6 ohm **across** that pair | `6 \\|\\| (4 + 2)` - the 6 comes first because you said it first |
+| ..., **then** a 3 ohm *(also: followed by, next, finally)* | `+ 3` on the end |
+| **two 4 ohm resistors** · **3 resistors of 6 ohms** · **twelve volt** | `4 + 4` · `6 \\|\\| 6 \\|\\| 6` · `12 V` |
+| 4.7 **kilo-ohm** · 2.2**k** | `4700` · `2200` |
+| an **unknown** 6 ohm · the 3 ohm **is unknown** | `hide: R3` |
+| **Find** the current through **and** the voltage across the 2 ohm resistor | `ask: current through R2, voltage across R2` |
+| **What is** the power in R3 · **Calculate** the total current · the equivalent resistance | `ask: power in R3` · `ask: total current` · `ask: equivalent resistance` |
+| the voltage across **each** resistor | one `voltage across` ask per resistor |
+
+One connection per phrase: write "a 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm" rather than
+"4 and 2 in series with 6 in parallel". A word the rules do not know stops the translation with a message naming that word,
+so nothing is guessed. The optional AI translator in the sidebar is only tried when the rules give up.
 
 ### Where the resistors go
 Reading order decides the picture. Parts before the last `+` go on the **top rail** left to right;
@@ -451,12 +497,24 @@ To move a resistor, move it in the text: `3 + (4 + 2) || 6` puts the 3 Ω on the
         h1.code(t, language="text")
         if h2.button(f"Load: {name}", key=f"help_{name}", width="stretch"):
             set_text(t)
+            st.toast("Loaded - see the Create tab.", icon="✏️")
+            st.rerun()
+    st.markdown("### Try these sentences")
+    for name, en in ENGLISH_EXAMPLES.items():
+        h1, h2 = st.columns([0.7, 0.3])
+        h1.markdown(f"> {en}")
+        if h2.button(f"Translate: {name}", key=f"help_en_{name}", width="stretch"):
+            result = lingo.translate(en)
+            ss.last_translation = {"english": en, "lingo": result, "how": "rules"}
+            set_text(result)
+            st.toast("Translated and loaded - see the Create tab.", icon="✏️")
             st.rerun()
     st.markdown(f"""
 ### What code does what (and where to read more)
 | Step | Code | Documentation |
 |---|---|---|
 | Read your text | `lingo.parse` - a small hand-written parser (recursive descent) | [Python `re`]({DOCS['python_re']}) |
+| Plain English → lingo | `lingo.translate` - fixed phrase rules, clause by clause; unknown words stop it with a message | [Python `re`]({DOCS['python_re']}) |
 | Draw the figure | `lingo.draw_code` writes a Schemdraw script; `render_worker.py` runs it in a separate process | [Schemdraw docs]({DOCS['schemdraw']}), [placement with `.endpoints()`]({DOCS['schemdraw_placement']}), [labels]({DOCS['schemdraw_labels']}), [video tutorial]({DOCS['youtube']}) |
 | PNG / JPEG / PDF | Schemdraw's Matplotlib backend, JPEG via Pillow | [Matplotlib]({DOCS['matplotlib']}), [Pillow]({DOCS['pillow']}) |
 | Solve | `lingo.solve` - series/parallel reduction, then back-substitution | [OpenStax: resistors in series and parallel]({DOCS['series_parallel']}) |
