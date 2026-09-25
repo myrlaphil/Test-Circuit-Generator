@@ -283,6 +283,7 @@ def parse_expression(expr: str) -> Node:
 _QUANT = [
     (r"equivalent\s+capacitance|total\s+capacitance|c_?eq\b", "ceq"),
     (r"equivalent|total\s+resistance|r_?eq\b", "req"),
+    (r"\bresistance\b|\bvalue\b", "resistance"),
     (r"total\s+current|battery\s+current|current\s+(from|drawn|supplied)", "total_current"),
     (r"reading|\bread|\bshow|indicat|display", "reading"),
     (r"\bcharge\b", "charge"),
@@ -338,6 +339,8 @@ def _parse_ask(chunk: str, problem: Problem) -> Ask:
     if quantity == "reading" and target.kind not in "AV":
         raise LingoError(f"In 'ask: {chunk}': {target.name} is a {target.what}, not a meter - ask for the current "
                          f"through or the voltage across it.")
+    if quantity == "resistance" and target.kind != "R":
+        raise LingoError(f"In 'ask: {chunk}': {target.name} is a {target.what}; ask for the resistance of a resistor.")
     if quantity in ("charge", "energy") and target.kind != "C":
         raise LingoError(f"In 'ask: {chunk}': {target.name} is a {target.what}; charge and stored energy apply to "
                          "capacitors.")
@@ -424,7 +427,7 @@ def _part_lingo(p: R) -> str:
 
 
 ASK_WORDS = {"current": "current through", "voltage": "voltage across", "power": "power in", "charge": "charge on",
-             "energy": "energy in", "reading": "reading of", "req": "equivalent resistance",
+             "energy": "energy in", "reading": "reading of", "resistance": "resistance of", "req": "equivalent resistance",
              "ceq": "equivalent capacitance", "total_current": "total current"}
 
 
@@ -890,6 +893,8 @@ def answers(p: Problem, res: Result) -> List[str]:
                 out.append(f"Charge on {a.target} = {_fq(r.get('charge', 0.0))}")
             elif a.quantity == "energy":
                 out.append(f"Energy stored in {a.target} = {_fj(r.get('energy', 0.0))}")
+            elif a.quantity == "resistance":
+                out.append(f"{a.target} = {fmt_ohms(q.value)}")
             else:
                 out.append({"current": f"Current through {a.target} = {_fa(r['current'])}",
                             "voltage": f"Voltage across {a.target} = {_fv(r['voltage'])}",
@@ -909,6 +914,11 @@ def question_text(p: Problem) -> str:
         return p.text
     notes = " ".join(f"{s.name} is {'closed' if s.closed else 'open'}." for s in p.parts() if s.kind == "S")
     lead = "The capacitors are fully charged. " if p.capacitors() else ""
+    if any(q.hidden and q.kind == "R" for q in p.parts()):
+        try:                                    # one unknown resistor is solvable once the battery current is known
+            lead += f"The battery supplies {_fa(solve(p).total_current)}. "
+        except LingoError:
+            pass
     if not p.asks:
         body = "For the circuit shown, find the current through and the voltage across every part."
         return " ".join(x for x in (lead + body, notes) if x)
@@ -923,7 +933,8 @@ def question_text(p: Problem) -> str:
                               "total_current": "the total current supplied by the battery"}[q])
             continue
         phr = {"current": "the current through", "voltage": "the voltage across", "power": "the power dissipated in",
-               "charge": "the charge on", "energy": "the energy stored in", "reading": "the reading of"}
+               "charge": "the charge on", "energy": "the energy stored in", "reading": "the reading of",
+               "resistance": "the resistance of"}
         parts.append(_join([phr[q] for q in qs]) + " " + _who(p.part(target)))
     tail = "of the circuit shown" if all(a.target is None for a in p.asks) else "in the circuit shown"
     return " ".join(x for x in (f"{lead}Determine {_join(parts)} {tail}.", notes) if x)
@@ -956,45 +967,112 @@ def solution_markdown(p: Problem, res: Result) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 5. Random problems at the Physics 2 level
+# 5. Random problems at the Physics 2 level - each comes with a plain-English description
+#    that translate() turns back into exactly the same lingo (checked by the tests).
 # ---------------------------------------------------------------------------
 
-SHAPES = {
-    "series": "{a} + {b} + {c}",
-    "parallel": "{a} || {b} || {c}",
-    "series-parallel": "({a} + {b}) || {c} + {d}",
-    "parallel then series": "{a} || {b} + {c}",
-    "two parallel pairs": "{a} || {b} + {c} || {d}",
-    "nested (worksheet style)": "{a} || ({b} + {c} || {d}) + {e}",
-    "capacitors": "{a}uF + {b}uF || {c}uF",
-    "capacitors (parallel then series)": "{a}uF || {b}uF + {c}uF",
-    "switch": "({a} + S1={s}) || {b} + {c}",
-    "meters": "A1 + ({a} + {b}) || {c} + {d} || V1",
+SHAPES = {                                   # name: (lingo, English)
+    "series": ("{a} + {b} + {c}", "a {a} ohm, a {b} ohm and a {c} ohm in series"),
+    "parallel": ("{a} || {b} || {c}", "a {a} ohm, a {b} ohm and a {c} ohm in parallel"),
+    "series-parallel": ("({a} + {b}) || {c} + {d}",
+                        "a {a} ohm and a {b} ohm in series, that pair in parallel with a {c} ohm, then a {d} ohm"),
+    "parallel then series": ("{a} || {b} + {c}", "a {a} ohm and a {b} ohm in parallel, then a {c} ohm"),
+    "two parallel pairs": ("{a} || {b} + {c} || {d}",
+                           "a {a} ohm and a {b} ohm in parallel, then a {c} ohm and a {d} ohm in parallel"),
+    "nested (worksheet style)": ("{a} || ({b} + {c} || {d}) + {e}",
+                                 "a {c} ohm and a {d} ohm in parallel, then a {b} ohm in series with that pair, "
+                                 "a {a} ohm across that whole group, then a {e} ohm"),
+    "capacitors": ("{a}uF + {b}uF || {c}uF",
+                   "a {b} uF and a {c} uF capacitor in parallel, then a {a} uF capacitor in series with that pair"),
+    "capacitors (parallel then series)": ("{a}uF || {b}uF + {c}uF",
+                                          "a {a} uF and a {b} uF capacitor in parallel, then a {c} uF capacitor"),
+    "switch": ("({a} + S1={s}) || {b} + {c}",
+               "a {a} ohm in series with a {s} switch, that pair in parallel with a {b} ohm, then a {c} ohm"),
+    "meters": ("A1 + ({a} + {b}) || {c} + {d} || V1",
+               "an ammeter, then a {a} ohm and a {b} ohm in series, that pair in parallel with a {c} ohm, "
+               "then a {d} ohm, a voltmeter across the {d} ohm"),
+}
+MIXED = ["series-parallel", "parallel then series", "two parallel pairs", "nested (worksheet style)"]
+PROBLEM_TYPES = {                            # what the teacher picks in the app -> shapes to draw from
+    "Mixed series-parallel": MIXED,
+    "Simple series": ["series"],
+    "Simple parallel": ["parallel"],
+    "Unknown resistor": MIXED[:3],
+    "Capacitors": ["capacitors", "capacitors (parallel then series)"],
+    "Switch (open or closed)": ["switch"],
+    "Meters (ammeter and voltmeter readings)": ["meters"],
 }
 OHMS = [1, 2, 3, 4, 5, 6, 8, 10, 12]
 VOLTS = [6, 9, 12, 24]
+_PHRASE = {"current": "the current through", "voltage": "the voltage across", "power": "the power dissipated in",
+           "charge": "the charge on", "energy": "the energy stored in", "reading": "the reading of",
+           "resistance": "the resistance of"}
+
+
+def _ask_english(a: Ask, p: Problem) -> str:
+    if a.target is None:
+        return {"req": "the equivalent resistance", "ceq": "the equivalent capacitance",
+                "total_current": "the total current"}[a.quantity]
+    q = p.part(a.target)
+    if q.hidden or q.kind == "S":
+        who = q.name
+    elif q.kind == "R":
+        who = f"the {q.value:g} ohm resistor"
+    elif q.kind == "C":
+        num, unit = re.fullmatch(r"([0-9.]+)(\w?F)", _lingo_farads(q.value)).groups()
+        who = f"the {num} {unit} capacitor"
+    else:
+        who = f"the {q.what}"
+    return f"{_PHRASE[a.quantity]} {who}"
+
+
+def _articles(s: str) -> str:
+    return re.sub(r"\ba (?=8\b|open\b|[aeiou])", "an ", s)
+
+
+def _make(rng: random.Random, shape: str, unknown: bool = False) -> Tuple[str, str]:
+    lingo_t, english_t = SHAPES[shape]
+    values: Dict[str, object] = dict(zip("abcde", rng.sample(OHMS, 5)))   # distinct values: "the 4 ohm" is unambiguous
+    values["s"] = rng.choice(["open", "closed"])
+    prob = Problem(rng.choice(VOLTS), parse_expression(lingo_t.format(**values)))
+    options = {"R": ["current", "voltage", "power"], "C": ["charge", "voltage", "energy"]}
+    hidden: Optional[R] = None
+    if unknown:
+        hidden = rng.choice(prob.resistors())
+        hidden.hidden = True
+        prob.asks = [Ask("resistance", hidden.name), Ask("current", hidden.name)]
+    elif shape == "meters":
+        prob.asks = [Ask("reading", "A1"), Ask("reading", "V1")]
+    else:
+        kind = rng.choice(["one", "one", "two", "total"])
+        candidates = [q for q in prob.parts() if q.kind in "RC"]
+        if kind == "total":
+            prob.asks = [Ask("ceq" if not prob.resistors() else "total_current")]
+        elif kind == "one":
+            t = rng.choice(candidates)
+            prob.asks = [Ask(rng.choice(options[t.kind]), t.name)]
+        else:
+            t = rng.choice(candidates)
+            prob.asks = [Ask(q, t.name) for q in options[t.kind][:2]]
+    english = f"{prob.volts:g} V battery, {english_t.format(**values)}."
+    if hidden is not None:
+        english += f" The {hidden.value:g} ohm is unknown."
+    english += " Find " + " and ".join(_ask_english(a, prob) for a in prob.asks) + "."
+    return _articles(english), to_lingo(prob)
+
+
+def random_problem(kind: Optional[str] = None, seed: Optional[int] = None) -> Tuple[str, str]:
+    """-> (plain English, lingo) for a random problem of the given type (see PROBLEM_TYPES)."""
+    rng = random.Random(seed)
+    kind = kind or rng.choice(list(PROBLEM_TYPES))
+    if kind not in PROBLEM_TYPES:
+        raise LingoError(f"Unknown problem type '{kind}'. Choose one of: {', '.join(PROBLEM_TYPES)}.")
+    return _make(rng, rng.choice(PROBLEM_TYPES[kind]), unknown=kind == "Unknown resistor")
 
 
 def random_lingo(seed: Optional[int] = None, shape: Optional[str] = None) -> str:
     rng = random.Random(seed)
-    shape = shape or rng.choice(list(SHAPES))
-    values = {k: rng.choice(OHMS) for k in "abcde"}
-    values["s"] = rng.choice(["open", "closed"])
-    prob = Problem(rng.choice(VOLTS), parse_expression(SHAPES[shape].format(**values)))
-    parts = prob.parts()
-    options = {"R": ["current", "voltage", "power"], "C": ["charge", "voltage", "energy"], "A": ["reading"],
-               "V": ["reading"], "S": ["current", "voltage"]}
-    candidates = [q for q in parts if q.kind != "S"]
-    kind = rng.choice(["one", "one", "two", "total"])
-    if kind == "total":
-        prob.asks = [Ask("ceq" if not prob.resistors() else "total_current")]
-    elif kind == "one":
-        t = rng.choice(candidates)
-        prob.asks = [Ask(rng.choice(options[t.kind]), t.name)]
-    else:
-        t = rng.choice([q for q in candidates if q.kind in "RC"])
-        prob.asks = [Ask(q, t.name) for q in options[t.kind][:2]]
-    return to_lingo(prob)
+    return _make(rng, shape or rng.choice(list(SHAPES)))[1]
 
 
 # ---------------------------------------------------------------------------
@@ -1031,7 +1109,7 @@ _OP = re.compile(r"\b(series|parallel|across)\b", re.I)
 _ASK_VERB = re.compile(r"\b(find|determine|calculate|compute|evaluate|solve|ask|asks|asked|question|what|how\s+much|"
                        r"work\s+out|give|students?)\b", re.I)
 _QUANT_RE = re.compile(r"equivalent\s+capacitance|total\s+capacitance|c_?eq\b|equivalent(?:\s+resistance)?|"
-                       r"total\s+resistance|r_?eq\b|total\s+current|battery\s+current|"
+                       r"total\s+resistance|r_?eq\b|\bresistance\b|total\s+current|battery\s+current|"
                        r"current(?:\s+(?:from|drawn|supplied|leaving|delivered))?|voltage|potential(?:\s+difference)?|"
                        r"power|dissipat\w*|\bcharge\b|energy|stored|reading|\breads?\b|\bshows?\b|indicates?", re.I)
 _HIDE_VERB = re.compile(r"\b(is|are|be|being|as|mark(?:ed)?|label(?:l?ed)?|leave|left|make|made|hide|hidden|call(?:ed)?|"
@@ -1377,7 +1455,8 @@ def _translate_ask(clause: str, prob: Problem) -> List[Ask]:
                   "voltage across" if word.startswith(("voltage", "potential")) else
                   "charge on" if word.startswith("charge") else
                   "energy in" if word.startswith(("energy", "stored")) else
-                  "reading of" if word.startswith(("reading", "read", "show", "indicat")) else "power in")
+                  "reading of" if word.startswith(("reading", "read", "show", "indicat")) else
+                  "resistance of" if word.startswith("resistance") else "power in")
         after = [t for t in targets if t[0] > q.end()]
         tgt = after[0][1] if after else targets[-1][1] if targets else None
         if tgt is None:

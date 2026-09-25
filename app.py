@@ -42,28 +42,16 @@ DOCS = {
 
 st.set_page_config(page_title="Test Circuit Generator", page_icon="⚡", layout="wide")
 
-EXAMPLES = {
-    "Worksheet problem 1": "source: 12 V\ncircuit: (4 + 2) || 6 + 3\nask: current through R2, voltage across R2",
-    "Worksheet problem 2": "source: 6 V\ncircuit: 6 || (2 + 3 || 6) + 1\nask: power in R3",
-    "Simple series": "source: 9 V\ncircuit: 2 + 4 + 6\nask: total current",
-    "Simple parallel": "source: 12 V\ncircuit: 3 || 6 || 9\nask: equivalent resistance, total current",
-    "Unknown resistor": "source: 24 V\ncircuit: 4 + 12 || 6 + 4\nask: current through R3\nhide: R3\n"
-                        "text: The battery supplies 2.00 A. Find the current through R3.",
-    "Capacitors": "source: 12 V\ncircuit: 4uF + 2uF || 6uF\nask: charge on C1, voltage across C2, equivalent capacitance",
-    "Switch (RC steady state)": "source: 12 V\ncircuit: (4 + S1=closed) || 6 + 3 || 2uF\n"
-                                "ask: current through R1, charge on C1\ntext: The switch has been closed a long time. "
-                                "Find the current through the 4.00 Ω resistor and the charge on the capacitor.",
-    "Meters": "source: 12 V\ncircuit: A1 + (4 + 2) || 6 + 3 || V1\nask: reading of A1, reading of V1",
-}
+DEFAULT_TYPE = "Mixed series-parallel"
 ENGLISH_EXAMPLES = {
-    "Worksheet problem 1": "12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, then a "
-                           "3 ohm. Find the current through and the voltage across the 2 ohm resistor.",
-    "Worksheet problem 2": "6 V battery, a 3 ohm and a 6 ohm in parallel, then a 2 ohm in series with that pair, a 6 ohm "
-                           "across that whole group, then a 1 ohm. Calculate the power dissipated in the 3 ohm resistor.",
+    "Textbook series-parallel": "12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, "
+                                "then a 3 ohm. Find the current through and the voltage across the 2 ohm resistor.",
+    "Nested groups": "6 V battery, a 3 ohm and a 6 ohm in parallel, then a 2 ohm in series with that pair, a 6 ohm "
+                     "across that whole group, then a 1 ohm. Calculate the power dissipated in the 3 ohm resistor.",
     "Three in parallel": "A 9 volt battery with 2, 4 and 6 ohms in parallel. Find the total current and the equivalent "
                          "resistance.",
-    "Unknown resistor": "24 V battery, a 4 ohm in series with a 12 ohm, then an unknown 6 ohm. What is the voltage "
-                        "across each resistor?",
+    "Unknown resistor": "24 V battery, a 4 ohm in series with a 12 ohm, then a 6 ohm. The 6 ohm is unknown. Find the "
+                        "resistance of R3 and the current through R3.",
     "Capacitors": "12 V battery, a 4 microfarad and a 2 microfarad capacitor in series, that pair in parallel with a "
                   "6 uF. Find the charge on the 4 uF capacitor and the equivalent capacitance.",
     "Switch and meters": "12 V battery, an ammeter, then a 4 ohm in series with a closed switch, that pair in parallel "
@@ -174,31 +162,89 @@ def get_client() -> Optional[llm.LLMClient]:
     return llm.LLMClient(preset["provider"], ss.ai_key, ss.ai_model, ss.ai_base)
 
 
-AI_SYSTEM = """You translate a physics teacher's description of a DC resistor circuit into "circuit lingo".
-Reply with the lingo only, no commentary. Format:
+AI_SYSTEM = """You translate a physics teacher's description of a DC circuit into "circuit lingo".
+Reply with the lingo only: no commentary, no code fences. Format:
 source: <volts> V
-circuit: <expression>   where + means series, || means parallel (|| binds tighter, like multiplication), parentheses group.
-    Resistors are numbered R1, R2... in the order written. Write R3=6 to force a name.
-ask: <one or more of: current through Rn, voltage across Rn, power in Rn, total current, equivalent resistance>
-Optional lines:  hide: Rn   (prints "Rn = ?")     text: <the teacher's own wording of the question>
-Example: "12 V battery; 4 and 2 in series, that pair in parallel with 6, then 3 in series; find the current in the 2 ohm"
+circuit: <expression>
+ask: <comma-separated questions>
+Optional lines:  hide: <names>  (prints "R3 = ?" on the figure)     text: <the teacher's own wording>
+
+Expression: + means series, || means parallel (|| binds tighter, like multiplication), parentheses group.
+Parts are numbered by kind in reading order (R1, R2 ... C1 ... S1 ... A1 ... V1):
+  4        a 4 ohm resistor          4.7k   a 4.7 kilo-ohm resistor
+  4uF      a capacitor (units F, mF, uF, nF, pF)
+  S1=open or S1=closed               a switch
+  A1       an ideal ammeter, in series with what it measures
+  V1       an ideal voltmeter, in parallel with what it measures, e.g. 3 || V1
+Questions: current through R2, voltage across R2, power in R2, resistance of R2, charge on C1, energy in C1,
+  reading of A1, reading of V1, total current, equivalent resistance, equivalent capacitance.
+One battery, DC steady state. Parts are drawn in the order written: first on the top rail, the last series part on
+the bottom rail, parallel branches stacked top to bottom.
+
+Example: "12 V battery; 4 and 2 in series, that pair in parallel with 6, then 3; find the current in the 2 ohm"
 ->
 source: 12 V
 circuit: (4 + 2) || 6 + 3
 ask: current through R2
-Pick sensible values when the teacher gives none."""
+
+Pick sensible values when the teacher gives none. If the circuit cannot be written this way (two batteries, a bridge,
+components other than these), reply with one line starting with "CANNOT:" and the reason."""
 
 
-def english_to_lingo(client: llm.LLMClient, text: str) -> str:
-    reply = client.chat(AI_SYSTEM, [{"role": "user", "content": text}], max_tokens=400)
-    reply = reply.replace("```", "").strip()
-    lingo.parse(reply)          # raises a LingoError the teacher can read
-    return reply
+def english_to_lingo(client: llm.LLMClient, text: str, rule_error: str = "") -> str:
+    """AI fallback.  Its reply must parse and solve as lingo, or it is rejected; one retry with the error."""
+    note = f"\n\n(The built-in rules could not read this sentence: {rule_error})" if rule_error else ""
+    msgs = [{"role": "user", "content": text + note}]
+    for attempt in range(2):
+        reply = client.chat(AI_SYSTEM, msgs, max_tokens=400).replace("```", "").strip()
+        if reply.upper().startswith("CANNOT"):
+            raise llm.LLMError(reply.split(":", 1)[-1].strip() or "this circuit cannot be written in lingo")
+        try:
+            lingo.solve(lingo.parse(reply))     # raises a LingoError the teacher can read
+            return reply
+        except lingo.LingoError as e:
+            if attempt:
+                raise
+            msgs += [{"role": "assistant", "content": reply},
+                     {"role": "user", "content": f"That lingo gives this error: {e} Reply with corrected lingo only."}]
+    raise AssertionError("unreachable")
 
 
-def set_text(t: str) -> None:
-    st.session_state.lingo_text = t
-    st.session_state.version += 1
+def load_problem(english: str, lingo_text: str, how: str = "rules") -> None:
+    """Put a sentence and its lingo in the two boxes (a new widget version, so the boxes show them)."""
+    ss = st.session_state
+    ss.english_text, ss.lingo_text, ss.translated_lingo = english, lingo_text, lingo_text
+    ss.translation = {"how": how, "error": None}
+    ss.version += 1
+
+
+def translate_english(english: str) -> None:
+    """Rules first (deterministic, free).  The AI helper only for sentences the rules cannot read."""
+    ss = st.session_state
+    try:
+        load_problem(english, lingo.translate(english), "rules")
+        return
+    except lingo.LingoError as rule_error:
+        ss.english_text = english
+        client = get_client()
+        if client is None:
+            ss.translation = {"how": "error", "error": str(rule_error), "ai": False}
+            return
+        try:
+            load_problem(english, english_to_lingo(client, english, str(rule_error)), "AI")
+        except (llm.LLMError, lingo.LingoError) as e:
+            ss.translation = {"how": "error", "error": f"{rule_error}\n\nThe AI translator could not fix it either: {e}",
+                              "ai": True}
+
+
+def new_random() -> None:
+    """A new random problem of the chosen type (the dropdown and the dice button both call this)."""
+    load_problem(*lingo.random_problem(st.session_state.problem_type))
+
+
+def retranslate() -> None:
+    ss = st.session_state
+    translate_english(ss.get(f"english_{ss.version}", ss.english_text))
 
 
 # ---------------------------------------------------------------------------
@@ -206,27 +252,25 @@ def set_text(t: str) -> None:
 # ---------------------------------------------------------------------------
 
 TOUR = [
-    ("Welcome", "You type a circuit in a tiny language, the **circuit lingo**, and the app gives you a worksheet-style "
-                "figure, the answers and a worked solution.\n\n```\nsource: 12 V\ncircuit: (4 + 2) || 6 + 3\n"
-                "ask: current through R2, voltage across R2\n```\n`+` means series, `||` means parallel, parentheses "
-                "group. That's most of it."),
-    ("Where things are", "**Create** - type or dictate the lingo (or press *Random problem*), see the figure and "
-                         "answers, then *Add to exam*.\n\n**Questions & Solutions** - the problems you've kept, "
-                         "exported as a two-part PDF (questions, then solutions).\n\n**How to use** - the full lingo "
-                         "guide, worked examples you can load with one click, and what code does what."),
-    ("Placing resistors", "Order matters: the first parts go on the top rail, left to right; the last series part "
-                          "goes on the bottom rail; parallel branches stack top to bottom in the order you write "
-                          "them.\n\nSo `(4 + 2) || 6 + 3` draws 4 and 2 on the upper branch, 6 on the lower branch, "
-                          "and 3 on the bottom rail - exactly like a textbook figure."),
-    ("Or just say it in English", "Open **Or write it in plain English** under the lingo box and type a sentence:\n\n"
-                                  "> 12 V battery. A 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, "
-                                  "then a 3 ohm. Find the current through the 2 ohm.\n\n"
-                                  "Press **Translate to lingo**. Fixed rules (no AI) turn it into lingo, show you the "
-                                  "result and put it in the box, so you learn the lingo as you go. Words the rules "
-                                  "know: *in series with*, *in parallel with*, *across*, *that pair*, *then*, "
-                                  "*unknown*, *a 4 uF capacitor*, *a closed switch*, *an ammeter*, *a voltmeter across ...*, "
-                                  "*find the current through / voltage across / charge on / reading of ...*. "
-                                  "A word they don't know is named in the error message."),
+    ("Welcome", "Describe a circuit in plain English and get a worksheet-style figure, the answers and a worked "
+                "solution.\n\n> 12 V battery, a 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm, "
+                "then a 3 ohm. Find the current through the 2 ohm resistor.\n\nFixed rules (no AI) turn the sentence "
+                "into **circuit lingo**, the short code the figure and the answers are built from."),
+    ("Where things are", "**Create** - pick a **problem type** to get a random problem of that kind (changing the "
+                         "type makes a new one, 🎲 gives another), or write your own sentence. Check the figure and "
+                         "answers, then **Add to problem set**.\n\n**Questions & Solutions** - your problem set, "
+                         "downloaded as a PDF (questions, then worked solutions).\n\n**How to use** - the phrases "
+                         "the rules understand, the problem types, and the circuit lingo."),
+    ("Order = picture", "Parts are drawn in the order you describe them: the first ones on the top rail, left to "
+                        "right; the last one on the bottom rail; parallel branches stack top to bottom.\n\nSo "
+                        "*'... that pair in parallel with a 6 ohm, then a 3 ohm'* puts the pair on the upper "
+                        "branch, the 6 Ω under it, and the 3 Ω on the bottom rail - like a textbook figure."),
+    ("Check and edit", "Under the sentence, **Circuit lingo** shows what the rules made of it: `+` series, `||` "
+                       "parallel, parentheses group, `4uF` capacitor, `S1=closed` switch, `A1` ammeter, `V1` "
+                       "voltmeter.\n\nEdit whichever you prefer: change the sentence and it is translated again, "
+                       "or fix the lingo directly (the figure follows the lingo).\n\nIf the rules can't read a "
+                       "sentence, the message names the word. With the **AI translator** connected in the sidebar, "
+                       "the AI rewrites that sentence as lingo instead, and the lingo opens for you to check."),
     ("Done", "The full guide is in the **How to use** tab, with links to the Schemdraw documentation and the exact "
              "code behind each figure. Replay this tour any time from the sidebar."),
 ]
@@ -259,8 +303,9 @@ def tour_dialog() -> None:
 ss = st.session_state
 if "version" not in ss:
     ss.version = 0
-    ss.lingo_text = EXAMPLES["Worksheet problem 1"]
-    ss.exam = []                       # list of dicts: text, question, solution, png, answers
+    ss.problem_type = DEFAULT_TYPE
+    load_problem(*lingo.random_problem(DEFAULT_TYPE))
+    ss.exam = []                       # the problem set: dicts with english, text, question, solution, png, answers
     ss.tour_step = 0
     settings = load_settings()
     ss.open_tour = not settings.get("tour_seen")
@@ -283,8 +328,9 @@ with st.sidebar:
     st.markdown("## ⚡ Test Circuit Generator")
     st.caption("Series & parallel resistor problems for Physics 2.")
     st.radio("Resistor symbol", ["US", "IEC"], key="style", horizontal=True, captions=["zig-zag", "box"])
-    with st.expander("🤖 Optional: AI translator"):
-        st.caption("Backup for plain-English sentences the built-in rules cannot read. Everything else works without it.")
+    with st.expander("🤖 AI translator (for sentences the rules can't read)"):
+        st.caption("Only used when the built-in rules cannot read your sentence. It writes circuit lingo, which is "
+                   "checked by the parser and shown for you to review. Everything else works without it.")
         st.selectbox("Service", list(llm.PRESETS), key="ai_preset", on_change=_preset_changed)
         st.text_input("API key", key="ai_key", type="password", placeholder="not needed for Ollama")
         st.text_input("Model", key="ai_model")
@@ -310,52 +356,46 @@ with tab_create:
     left, right = st.columns([0.42, 0.58], gap="large")
     with left:
         st.subheader("1. Describe the circuit")
-        c1, c2, c3 = st.columns(3)
-        if c1.button("🎲 Random problem", width="stretch"):
-            set_text(lingo.random_lingo())
+        t1, t2 = st.columns([0.6, 0.4], vertical_alignment="bottom")
+        t1.selectbox("Problem type", list(lingo.PROBLEM_TYPES), key="problem_type", on_change=new_random,
+                     help="Choosing a type makes a new random problem of that kind. See How to use for what each "
+                          "type contains.")
+        t2.button("🎲 New random problem", on_click=new_random, width="stretch")
+        english = st.text_area("Plain English", ss.english_text, key=f"english_{ss.version}", height=140,
+                               placeholder="12 V battery, a 4 ohm and a 2 ohm in series, that pair in parallel with a "
+                                           "6 ohm, then a 3 ohm. Find the current through the 2 ohm resistor.",
+                               help="Press Ctrl+Enter (⌘+Enter on Mac) or click outside the box to translate. "
+                                    "The How to use tab lists the phrases the rules understand.")
+        if english != ss.english_text:
+            translate_english(english)
             st.rerun()
-        example = c2.selectbox("Example", list(EXAMPLES), label_visibility="collapsed")
-        if c3.button("Load example", width="stretch"):
-            set_text(EXAMPLES[example])
-            st.rerun()
-        text = st.text_area("Circuit lingo", ss.lingo_text, key=f"lingo_{ss.version}", height=150,
-                            help="+ = series, || = parallel, ( ) = grouping. See the How to use tab.")
-        ss.lingo_text = text
-        with st.expander("Or write it in plain English", expanded=bool(ss.get("last_translation"))):
-            english = st.text_area("Plain English", height=80, key="english",
-                                   placeholder="12 V battery, a 4 ohm and a 2 ohm in series, that pair in parallel "
-                                               "with a 6 ohm, then a 3 ohm. Find the current through the 2 ohm.")
-            client = get_client()
-            if st.button("Translate to lingo", type="primary", disabled=not english.strip()):
-                try:
-                    result, how = lingo.translate(english), "rules"
-                except lingo.LingoError as rule_error:
-                    if client is None:
-                        st.error(str(rule_error))
-                        result = None
-                    else:
-                        try:
-                            result, how = english_to_lingo(client, english), "AI"
-                        except (llm.LLMError, lingo.LingoError) as e:
-                            st.error(f"{rule_error}\n\nThe AI translator could not help either: {e}")
-                            result = None
-                if result:
-                    ss.last_translation = {"english": english, "lingo": result, "how": how}
-                    set_text(result)
-                    st.rerun()
-            if ss.get("last_translation"):
-                lt = ss.last_translation
-                st.markdown("**Translated to lingo** " + ("(by the rules, no AI)" if lt["how"] == "rules"
-                                                          else "(by the AI helper - check it)"))
-                st.markdown(f"> {lt['english']}")
-                st.code(lt["lingo"], language="text")
-                st.caption("This is what the lingo box now holds. Same words next time give the same lingo. "
-                           "Phrases the rules know: *in series (with)*, *in parallel (with)*, *across*, *that pair*, "
-                           "*then*, *unknown*, *find the current through / voltage across / power in ...*")
-            else:
-                st.caption("Plain sentences are turned into lingo by fixed rules (no AI). The lingo is shown here "
-                           "and put in the box above, so you can check it and learn it. The optional AI translator "
-                           "in the sidebar only steps in for sentences the rules cannot read.")
+
+        tr = ss.translation
+        current_lingo = ss.get(f"lingo_{ss.version}", ss.lingo_text)
+        s1, s2 = st.columns([0.72, 0.28], vertical_alignment="center")
+        if tr["how"] == "error":
+            s1.error(tr["error"])
+            if not tr.get("ai"):
+                s1.caption("Reword the sentence, edit the circuit lingo below, or connect the **AI translator** in "
+                           "the sidebar to fix sentences like this automatically.")
+        elif current_lingo.strip() != ss.translated_lingo.strip():
+            s1.caption("✎ The circuit lingo was edited by hand: the figure follows the lingo, not the sentence. "
+                       "Press Translate to go back to the sentence.")
+        elif tr["how"] == "AI":
+            s1.warning("Translated by the **AI helper** because the rules could not read the sentence. Check the "
+                       "circuit lingo below.")
+        else:
+            s1.caption("✓ Translated by fixed rules (no AI).")
+        s2.button("↻ Translate", on_click=retranslate, width="stretch",
+                  help="Translate the sentence again (for example after connecting the AI translator).")
+
+        with st.expander("Circuit lingo (what the figure is built from; edit here if you prefer)",
+                         expanded=tr["how"] in ("AI", "error")):
+            text = st.text_area("Circuit lingo", ss.lingo_text, key=f"lingo_{ss.version}", height=130,
+                                label_visibility="collapsed")
+            ss.lingo_text = text
+            st.caption("`+` series · `||` parallel · `( )` group · `4uF` capacitor · `S1=closed` switch · `A1` "
+                       "ammeter · `6 || V1` voltmeter across the 6 Ω · `6?` hidden value. Full guide in How to use.")
 
         try:
             built = build(text, ss.style)
@@ -364,22 +404,22 @@ with tab_create:
             built, error = None, str(e)
 
         if error:
-            st.error(error)
+            st.error(f"Circuit lingo: {error}")
         else:
-            p = built["problem"]
             st.subheader("2. Question")
             st.markdown(f"> {built['question']}")
             st.subheader("3. Answers")
             if built["answers"]:
                 st.success("\n".join(f"- {a}" for a in built["answers"]))
             else:
-                st.info("Add an `ask:` line to pick what students must find.")
+                st.info("Say what to find, e.g. *Find the current through the 2 ohm resistor.*")
             with st.expander("Worked solution"):
                 st.markdown(built["solution"])
-            if st.button("➕ Add to exam", type="primary", disabled=not built["render"].get("ok")):
-                ss.exam.append({"text": text, "question": built["question"], "solution": built["solution"],
+            if st.button("➕ Add to problem set", type="primary", disabled=not built["render"].get("ok")):
+                ss.exam.append({"english": ss.english_text, "translated": ss.translated_lingo, "how": tr["how"],
+                                "text": text, "question": built["question"], "solution": built["solution"],
                                 "png": built["render"]["png"], "answers": built["answers"]})
-                st.toast(f"Added as problem {len(ss.exam)}.", icon="✅")
+                st.toast(f"Added as problem {len(ss.exam)} of the problem set.", icon="✅")
 
     with right:
         st.subheader("Figure")
@@ -392,17 +432,19 @@ with tab_create:
             download(d2, "JPEG", r["jpg"], f"{name}.jpg", "image/jpeg")
             download(d3, "PDF", r["pdf"], f"{name}.pdf", "application/pdf")
             download(d4, "SVG", r["svg"], f"{name}.svg", "image/svg+xml")
-            download(d5, "Lingo", text, f"{name}.txt", "text/plain")
+            download(d5, "Lingo", f"# {ss.english_text}\n{text}", f"{name}.txt", "text/plain")
             with st.expander("🔍 What code made this? (transparency)"):
                 st.markdown(
-                    f"1. **Parser** (`lingo.parse`, plain Python with [regular expressions]({DOCS['python_re']})) "
-                    f"read your text into a tree: series and parallel groups of resistors.\n"
-                    f"2. **Layout** (`lingo.draw_code`) walked that tree and wrote the "
+                    f"1. **Translator** (`lingo.translate`, fixed phrase rules) turned your sentence into circuit "
+                    f"lingo{' - here the AI helper did it, because the rules could not' if tr['how'] == 'AI' else ''}.\n"
+                    f"2. **Parser** (`lingo.parse`, plain Python with [regular expressions]({DOCS['python_re']})) "
+                    f"read the lingo into a tree: series and parallel groups of parts.\n"
+                    f"3. **Layout** (`lingo.draw_code`) walked that tree and wrote the "
                     f"[Schemdraw]({DOCS['schemdraw']}) script below: every part is placed with "
                     f"[`.endpoints()`]({DOCS['schemdraw_placement']}) at exact coordinates, so loops always close.\n"
-                    f"3. **Renderer** (`render_worker.py`) ran that script in a separate process and saved SVG, and "
+                    f"4. **Renderer** (`render_worker.py`) ran that script and saved SVG, and "
                     f"PNG/PDF through [Matplotlib]({DOCS['matplotlib']}).\n"
-                    f"4. **Solver** (`lingo.solve`) reduced the same tree step by step (series add, parallel "
+                    f"5. **Solver** (`lingo.solve`) reduced the same tree step by step (series add, parallel "
                     f"reciprocals) - that is the worked solution on the left.")
                 st.code(built["code"], language="python")
                 st.caption(f"Element gallery: [{DOCS['schemdraw_elements']}]({DOCS['schemdraw_elements']}) · "
@@ -416,17 +458,18 @@ with tab_create:
 
 with tab_exam:
     if not ss.exam:
-        st.info("No problems yet. Make one in the Create tab and press **Add to exam**.")
+        st.info("No problems yet. Make one in the Create tab and press **Add to problem set**.")
     else:
-        title = st.text_input("Exam title", "Resistors in series and parallel")
+        title = st.text_input("Problem set title", "Resistors in series and parallel")
         e1, e2, e3 = st.columns(3)
         items = [(x["question"], x["solution"], x["png"], "; ".join(x["answers"])) for x in ss.exam]
         download(e1, "⬇️ Questions + solutions PDF", exam_pdf.build(items, title, True),
-                 "exam_with_solutions.pdf", "application/pdf")
+                 "problem_set_with_solutions.pdf", "application/pdf")
         download(e2, "⬇️ Questions only PDF", exam_pdf.build(items, title, False),
-                 "exam_questions.pdf", "application/pdf")
-        download(e3, "⬇️ All lingo (.txt, reload later)", "\n\n---\n\n".join(x["text"] for x in ss.exam),
-                 "exam_lingo.txt", "text/plain")
+                 "problem_set_questions.pdf", "application/pdf")
+        download(e3, "⬇️ All problems as text (.txt)",
+                 "\n\n---\n\n".join(f"# {x.get('english', '')}\n{x['text']}" for x in ss.exam),
+                 "problem_set.txt", "text/plain")
         st.divider()
         for i, x in enumerate(ss.exam):
             a, b = st.columns([0.55, 0.45], gap="large")
@@ -439,7 +482,9 @@ with tab_exam:
                     st.markdown(x["solution"])
                 k1, k2 = st.columns(2)
                 if k1.button("Edit in Create", key=f"edit{i}"):
-                    set_text(x["text"])
+                    load_problem(x.get("english", ""), x["text"], x.get("how", "rules"))
+                    ss.translated_lingo = x.get("translated", x["text"])
+                    st.toast("Loaded - see the Create tab.", icon="✏️")
                     st.rerun()
                 if k2.button("Remove", key=f"rm{i}"):
                     ss.exam.pop(i)
@@ -452,7 +497,31 @@ with tab_exam:
 
 with tab_help:
     st.markdown(f"""
-### The circuit lingo
+### Quick start
+1. **Pick a problem type** at the top of the Create tab. Changing the type makes a new random problem of that kind;
+   **🎲 New random problem** gives another one of the same type.
+2. **Or describe your own circuit** in the **Plain English** box, e.g. *12 V battery, a 4 ohm and a 2 ohm in series,
+   that pair in parallel with a 6 ohm, then a 3 ohm. Find the current through the 2 ohm resistor.* Press Ctrl+Enter
+   (⌘+Enter on Mac) or click outside the box. Fixed rules (no AI) turn it into circuit lingo.
+3. **Check it.** Open **Circuit lingo** under the sentence to see what the rules made of it. Edit whichever you prefer:
+   change the sentence and it is translated again, or fix the lingo directly (the figure always follows the lingo).
+4. **If the rules can't read a sentence**, the message names the word. With the **AI translator** connected in the
+   sidebar, the AI rewrites the sentence as lingo instead; the lingo opens so you can check it. The AI's lingo still
+   goes through the same parser and solver, so the figure and answers are never made up.
+5. **➕ Add to problem set**, then download the questions and worked solutions as a PDF from the
+   **Questions & Solutions** tab.
+
+### Problem types
+| Type | What you get |
+|---|---|
+| Mixed series-parallel | textbook-style resistor networks: a pair in series inside a parallel group, two parallel pairs, groups nested in groups |
+| Simple series · Simple parallel | three resistors all in series, or all in parallel |
+| Unknown resistor | one resistor is drawn as "R = ?"; the question gives the battery current and asks for that resistance and its current |
+| Capacitors | three fully charged capacitors: charge, voltage, stored energy or equivalent capacitance |
+| Switch (open or closed) | a resistor with a switch in its branch; the question states whether the switch is open or closed |
+| Meters (ammeter and voltmeter readings) | an ideal **ammeter** (A) in series with the battery measures the total current, and an ideal **voltmeter** (V) connected across one resistor measures that resistor's voltage. Students find what each meter reads. |
+
+### The circuit lingo (under the hood)
 
 | You write | Meaning |
 |---|---|
@@ -484,8 +553,8 @@ share the same voltage.
 
 ### Plain English (no AI needed)
 
-Under the lingo box, open **Or write it in plain English**, type a sentence and press **Translate to lingo**.
-Fixed rules read it, show the lingo they produced, and put it in the lingo box. The same sentence always gives the same lingo.
+Type a sentence in the **Plain English** box on the Create tab. Fixed rules read it and write the circuit lingo
+(open **Circuit lingo** under the sentence to see it). The same sentence always gives the same lingo.
 
 | You say | The rules produce |
 |---|---|
@@ -501,6 +570,7 @@ Fixed rules read it, show the lingo they produced, and put it in the lingo box. 
 | **Find** the current through **and** the voltage across the 2 ohm resistor | `ask: current through R2, voltage across R2` |
 | **What is** the power in R3 · **Calculate** the total current · the equivalent resistance | `ask: power in R3` · `ask: total current` · `ask: equivalent resistance` |
 | the voltage across **each** resistor | one `voltage across` ask per resistor |
+| The 6 ohm is unknown. Find **the resistance of** R3 | `hide: R3` · `ask: resistance of R3` (the question then states the battery current) |
 | a 4 **microfarad** and a 2 **uF** capacitor in series · capacitors of 4 and 6 uF | `4uF + 2uF` · `4uF + 6uF` |
 | a 4 ohm in series with a **closed switch** · an **open switch** · the switch **is closed** | `4 + S1=closed` · `S1=open` · changes the switch already described |
 | an **ammeter**, then ... · a **voltmeter across** the 3 ohm · a voltmeter across that pair | `A1 + ...` · `3 \\|\\| V1` · `(...) \\|\\| V1` |
@@ -509,31 +579,22 @@ Fixed rules read it, show the lingo they produced, and put it in the lingo box. 
 
 One connection per phrase: write "a 4 ohm and a 2 ohm in series, that pair in parallel with a 6 ohm" rather than
 "4 and 2 in series with 6 in parallel". A word the rules do not know stops the translation with a message naming that word,
-so nothing is guessed. The optional AI translator in the sidebar is only tried when the rules give up.
+so nothing is guessed. The AI translator in the sidebar, if connected, is only tried when the rules give up.
 
 ### Where the resistors go
 Reading order decides the picture. Parts before the last `+` go on the **top rail** left to right;
 the **last** series part goes on the **bottom rail**; parallel branches **stack top to bottom** in the order written.
 To move a resistor, move it in the text: `3 + (4 + 2) || 6` puts the 3 Ω on the top-left instead of the bottom.
+In a sentence it is the same: parts are drawn in the order you describe them.
 
-### Try these
+### Try these sentences
 """)
-    for name, t in EXAMPLES.items():
-        h1, h2 = st.columns([0.7, 0.3])
-        h1.code(t, language="text")
-        if h2.button(f"Load: {name}", key=f"help_{name}", width="stretch"):
-            set_text(t)
-            st.toast("Loaded - see the Create tab.", icon="✏️")
-            st.rerun()
-    st.markdown("### Try these sentences")
     for name, en in ENGLISH_EXAMPLES.items():
         h1, h2 = st.columns([0.7, 0.3])
         h1.markdown(f"> {en}")
-        if h2.button(f"Translate: {name}", key=f"help_en_{name}", width="stretch"):
-            result = lingo.translate(en)
-            ss.last_translation = {"english": en, "lingo": result, "how": "rules"}
-            set_text(result)
-            st.toast("Translated and loaded - see the Create tab.", icon="✏️")
+        if h2.button(f"Use: {name}", key=f"help_en_{name}", width="stretch"):
+            translate_english(en)
+            st.toast("Loaded - see the Create tab.", icon="✏️")
             st.rerun()
     st.markdown(f"""
 ### What code does what (and where to read more)
@@ -547,7 +608,7 @@ To move a resistor, move it in the text: `3 + (4 + 2) || 6` puts the 3 Ω on the
 | Exam PDF | `exam_pdf.py` | [ReportLab]({DOCS['reportlab']}) |
 | This screen | `app.py` | [Streamlit]({DOCS['streamlit']}) |
 | Random problems | `lingo.random_lingo` - six Physics-2 arrangements, values from a fixed pool | - |
-| Optional AI | `llm.py` translates English → lingo; the result is always shown for checking | - |
+| AI translator (optional) | `llm.py` rewrites sentences the rules can't read as lingo; that lingo is checked by the parser and solver and shown for review | - |
 
 **Limits (for now):** DC circuits with one battery, in steady state: resistors, capacitors, switches and ideal meters.
 Not yet: RC time constants, multi-battery loops, bridges. Uploading a photo of an existing figure and getting a variation is planned.

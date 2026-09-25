@@ -44,14 +44,18 @@ The optional AI translator is the one feature meant for the desktop version.
 | `site/index.html`, `build_site.sh` | the GitHub Pages build (stlite); deployed by `.github/workflows/pages.yml` on every push to `main` |
 
 ## Features
-- Resistors, capacitors, switches (open/closed) and ideal meters, solved in DC steady state by series/parallel
-  reduction with the worked steps a student would write (Q = CV, U = ½CV², meter readings, open/shorted branches)
-- Plain-English sentences translated to lingo by fixed rules; the generated lingo is always shown
-- Random problem button (ten arrangements, nice values)
-- Figure export as PNG, JPEG, PDF, SVG; lingo export to reload later
-- Questions & Solutions tab → two-part exam PDF
+- **Plain English first**: describe the circuit in a sentence; fixed rules (no AI) turn it into circuit lingo, which is
+  shown and editable. Edit the sentence or the lingo, whichever you prefer.
+- **AI translator as a fallback** (Claude, OpenAI, Gemini, or free local Ollama): only used for sentences the rules
+  cannot read. Its lingo must pass the same parser and solver, so figures and answers are never made up.
+- **Problem types** drive the random generator: mixed series-parallel, simple series, simple parallel, unknown
+  resistor, capacitors, switch (open or closed), and meters (ammeter and voltmeter readings). Every random problem
+  comes with an English description that translates back to exactly the same lingo.
+- Resistors, capacitors, switches and ideal meters, solved in DC steady state by series/parallel reduction with the
+  worked steps a student would write (Q = CV, U = ½CV², meter readings, open and shorted branches)
+- Figure export as PNG, JPEG, PDF, SVG
+- Problem set → two-part PDF (questions, then worked solutions)
 - "What code made this?" expander showing the exact Schemdraw script, with documentation links
-- Optional AI translator (Claude, OpenAI, Gemini, or free local Ollama) whose output is always shown for checking
 
 ## Roadmap
 - RC time constants, multi-battery loops and bridges (the JSON-spec engine in `circuit_core.py` already solves loops)

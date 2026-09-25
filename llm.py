@@ -68,7 +68,9 @@ class LLMClient:
         r = requests.post(
             self.base_url.rstrip("/") + "/v1/messages",
             headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
+                     "content-type": "application/json",
+                     # lets the GitHub Pages build (Python in the browser) call the API directly
+                     "anthropic-dangerous-direct-browser-access": "true"},
             json={"model": self.model, "max_tokens": max_tokens, "system": system, "messages": msgs},
             timeout=self.timeout)
         if r.status_code != 200:

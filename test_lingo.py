@@ -254,3 +254,37 @@ def test_translate_new_part_errors():
         lingo.translate("12 V battery, capacitors of 4 and 6 in series")
     with pytest.raises(lingo.LingoError, match="what the voltmeter is across"):
         lingo.translate("12 V battery, 4 and 2 in series, then a voltmeter")
+
+
+# ---------------------------------------------------------------------------
+# problem types: every random problem comes with English that translates back to the same lingo
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("kind", list(lingo.PROBLEM_TYPES))
+def test_random_problem_english_round_trips(kind):
+    for seed in range(40):
+        english, text = lingo.random_problem(kind, seed)
+        assert lingo.translate(english) == text, english
+        p = lingo.parse(text)
+        lingo.solve(p); lingo.draw_code(p); lingo.question_text(p)
+
+
+def test_problem_type_contents():
+    en, text = lingo.random_problem("Meters (ammeter and voltmeter readings)", 1)
+    assert "ammeter" in en and "voltmeter across" in en and "ask: reading of A1, reading of V1" in text
+    assert "S1=" in lingo.random_problem("Switch (open or closed)", 1)[1]
+    assert "uF" in lingo.random_problem("Capacitors", 1)[1]
+    with pytest.raises(lingo.LingoError, match="Unknown problem type"):
+        lingo.random_problem("Worksheet problem 1")
+
+
+def test_unknown_resistor_gives_battery_current_and_asks_resistance():
+    p = lingo.parse("source: 24 V\ncircuit: 4 + 12 + 6\nhide: R3\nask: resistance of R3, current through R3")
+    q = lingo.question_text(p)
+    assert q.startswith("The battery supplies 1.09 A.") and "resistance of" in q
+    assert lingo.answers(p, lingo.solve(p)) == ["R3 = 6.00 Ω", "Current through R3 = 1.09 A"]
+    with pytest.raises(lingo.LingoError, match="resistance of a resistor"):
+        lingo.parse("source: 12 V\ncircuit: 4 + 2uF\nask: resistance of C1")
+    assert lingo.translate("24 V battery, a 4 ohm in series with a 12 ohm, then a 6 ohm. The 6 ohm is unknown. "
+                           "Find the resistance of R3 and the current through R3.").endswith(
+        "ask: resistance of R3, current through R3\nhide: R3")
