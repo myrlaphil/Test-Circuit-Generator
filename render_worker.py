@@ -45,9 +45,13 @@ def run(code: str, backend: str):
     return d
 
 
-def main() -> int:
-    code_file, out_dir = sys.argv[1], sys.argv[2]
-    code = open(code_file, encoding="utf-8").read()
+def render_files(code: str, out_dir: str) -> dict:
+    """Run the drawing code and write diagram.svg / .png / .pdf into out_dir.
+
+    Returns {"ok": True} or {"ok": False, "error": ..., "line": ...}.  Used by the
+    subprocess entry point below, and called directly when the app runs in the
+    browser (stlite / Pyodide), where there are no subprocesses.
+    """
     try:
         # pass 1: native SVG backend -> labels stay real, editable text
         d = run(code, "svg")
@@ -57,13 +61,19 @@ def main() -> int:
         d = run(code, "matplotlib")
         d.save(os.path.join(out_dir, "diagram.png"), transparent=False, dpi=220)
         d.save(os.path.join(out_dir, "diagram.pdf"), transparent=False)
-        print(json.dumps({"ok": True}))
-        return 0
+        return {"ok": True}
     except Exception as e:  # noqa: BLE001 - we want every error reported back
         tb = traceback.extract_tb(sys.exc_info()[2])
         line = next((fr.lineno for fr in reversed(tb) if fr.filename == "<drawing code>"), None)
-        print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}", "line": line}))
-        return 1
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "line": line}
+
+
+def main() -> int:
+    code_file, out_dir = sys.argv[1], sys.argv[2]
+    code = open(code_file, encoding="utf-8").read()
+    info = render_files(code, out_dir)
+    print(json.dumps(info))
+    return 0 if info["ok"] else 1
 
 
 if __name__ == "__main__":

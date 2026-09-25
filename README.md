@@ -14,7 +14,14 @@ ask: current through R2, voltage across R2
 order written; the first parts go on the top rail, the last series part on the bottom rail, parallel branches
 stack top to bottom. Full guide in the app's **How to use** tab.
 
-## Run it
+## Use it in a browser (no install)
+
+**https://myrlaphil.github.io/Test-Circuit-Generator/** - the whole app runs inside your browser
+([stlite](https://github.com/whitphx/stlite): Streamlit on Pyodide/WebAssembly). The first visit downloads
+about 30 MB of Python and packages, so give it half a minute; nothing you type leaves your computer.
+The optional AI translator is the one feature meant for the desktop version.
+
+## Run it on your computer
 
 1. Install Python 3.10+ from https://www.python.org/downloads/ (Windows: tick "Add to PATH").
 2. Windows: double-click `run_windows.bat`. Mac/Linux: `bash run_mac_linux.sh`.
@@ -31,6 +38,7 @@ stack top to bottom. Full guide in the app's **How to use** tab.
 | `exam_pdf.py` | questions-then-solutions PDF (ReportLab) |
 | `llm.py`, `circuit_core.py` | optional AI translator (English → lingo) and the earlier JSON-spec engine it borrows from |
 | `test_lingo.py` | checks against hand-worked answers: `python -m pytest` |
+| `site/index.html`, `build_site.sh` | the GitHub Pages build (stlite); deployed by `.github/workflows/pages.yml` on every push to `main` |
 
 ## Features
 - Random problem button (six Physics-2 arrangements, nice values)

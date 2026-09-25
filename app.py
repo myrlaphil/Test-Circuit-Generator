@@ -24,6 +24,7 @@ import llm
 
 APP_DIR = Path(__file__).resolve().parent
 WORKER = APP_DIR / "render_worker.py"
+IN_BROWSER = sys.platform == "emscripten"      # running under stlite / Pyodide (GitHub Pages build)
 SETTINGS_FILE = Path.home() / ".test_circuit_generator.json"
 DOCS = {
     "schemdraw": "https://schemdraw.readthedocs.io/",
@@ -69,21 +70,35 @@ def save_settings(d: Dict[str, Any]) -> None:
         pass
 
 
+def _render_subprocess(code: str, tmp: str) -> Dict[str, Any]:
+    """Desktop: run render_worker.py in a separate process with a 60 s time limit."""
+    cf = Path(tmp) / "code.py"
+    cf.write_text(code, encoding="utf-8")
+    try:
+        proc = subprocess.run([sys.executable, str(WORKER), str(cf), tmp], capture_output=True, text=True, timeout=60)
+        return json.loads(proc.stdout.strip().splitlines()[-1]) if proc.stdout.strip() else {
+            "ok": False, "error": proc.stderr[-400:] or "no output"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def _render_in_process(code: str, tmp: str) -> Dict[str, Any]:
+    """Browser (stlite): no subprocesses exist, so call the worker's function directly."""
+    import render_worker
+    try:
+        return render_worker.render_files(code, tmp)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 def render(code: str) -> Dict[str, Any]:
-    """Run the Schemdraw code in a separate, time-limited process (render_worker.py)."""
+    """Run the Schemdraw code (separate time-limited process on desktop, in-process in the browser)."""
     cache = st.session_state.setdefault("render_cache", {})
     key = hashlib.sha256(code.encode()).hexdigest()
     if key in cache:
         return cache[key]
     with tempfile.TemporaryDirectory() as tmp:
-        cf = Path(tmp) / "code.py"
-        cf.write_text(code, encoding="utf-8")
-        try:
-            proc = subprocess.run([sys.executable, str(WORKER), str(cf), tmp], capture_output=True, text=True, timeout=60)
-            info = json.loads(proc.stdout.strip().splitlines()[-1]) if proc.stdout.strip() else {
-                "ok": False, "error": proc.stderr[-400:] or "no output"}
-        except Exception as e:  # noqa: BLE001
-            info = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        info = _render_in_process(code, tmp) if IN_BROWSER else _render_subprocess(code, tmp)
         out = dict(info)
         if info.get("ok"):
             for ext in ("svg", "png", "pdf"):
@@ -97,6 +112,29 @@ def render(code: str) -> Dict[str, Any]:
         cache.clear()
     cache[key] = out
     return out
+
+
+_DL_CSS = """<style>
+a.tcg-dl { display:inline-block; width:100%; box-sizing:border-box; text-align:center; padding:0.25rem 0.75rem;
+  min-height:2.5rem; line-height:2rem; border-radius:0.5rem; border:1px solid rgba(49,51,63,0.2);
+  color:inherit !important; text-decoration:none !important; font-weight:400; margin-bottom:0.5rem; }
+a.tcg-dl:hover { border-color:#1f6feb; color:#1f6feb !important; }
+</style>"""
+
+
+def download(col, label: str, data, filename: str, mime: str) -> None:
+    """A download control that also works in the browser build.
+
+    st.download_button fetches from a server that does not exist under stlite, so there we
+    emit a plain <a download> link carrying the bytes as a data: URL instead.
+    """
+    if not IN_BROWSER:
+        col.download_button(label, data, filename, mime, width="stretch")
+        return
+    import base64
+    raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+    href = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    col.markdown(f'<a class="tcg-dl" href="{href}" download="{filename}">{label}</a>', unsafe_allow_html=True)
 
 
 def build(text: str, style: str) -> Dict[str, Any]:
@@ -231,6 +269,8 @@ if ss.open_tour:
     tour_dialog()
 
 st.title("⚡ Test Circuit Generator")
+if IN_BROWSER:
+    st.markdown(_DL_CSS, unsafe_allow_html=True)      # styles the data-URL download links (every rerun)
 tab_create, tab_exam, tab_help = st.tabs(["✏️ Create", "📋 Questions & Solutions", "📖 How to use"])
 
 # ---------------------------------------------------------------------------
@@ -296,11 +336,11 @@ with tab_create:
             st.image(r["png"], width="stretch")
             name = "circuit"
             d1, d2, d3, d4, d5 = st.columns(5)
-            d1.download_button("PNG", r["png"], f"{name}.png", "image/png", width="stretch")
-            d2.download_button("JPEG", r["jpg"], f"{name}.jpg", "image/jpeg", width="stretch")
-            d3.download_button("PDF", r["pdf"], f"{name}.pdf", "application/pdf", width="stretch")
-            d4.download_button("SVG", r["svg"], f"{name}.svg", "image/svg+xml", width="stretch")
-            d5.download_button("Lingo", text, f"{name}.txt", "text/plain", width="stretch")
+            download(d1, "PNG", r["png"], f"{name}.png", "image/png")
+            download(d2, "JPEG", r["jpg"], f"{name}.jpg", "image/jpeg")
+            download(d3, "PDF", r["pdf"], f"{name}.pdf", "application/pdf")
+            download(d4, "SVG", r["svg"], f"{name}.svg", "image/svg+xml")
+            download(d5, "Lingo", text, f"{name}.txt", "text/plain")
             with st.expander("🔍 What code made this? (transparency)"):
                 st.markdown(
                     f"1. **Parser** (`lingo.parse`, plain Python with [regular expressions]({DOCS['python_re']})) "
@@ -329,12 +369,12 @@ with tab_exam:
         title = st.text_input("Exam title", "Resistors in series and parallel")
         e1, e2, e3 = st.columns(3)
         items = [(x["question"], x["solution"], x["png"], "; ".join(x["answers"])) for x in ss.exam]
-        e1.download_button("⬇️ Questions + solutions PDF", exam_pdf.build(items, title, True),
-                           "exam_with_solutions.pdf", "application/pdf", width="stretch")
-        e2.download_button("⬇️ Questions only PDF", exam_pdf.build(items, title, False),
-                           "exam_questions.pdf", "application/pdf", width="stretch")
-        e3.download_button("⬇️ All lingo (.txt, reload later)", "\n\n---\n\n".join(x["text"] for x in ss.exam),
-                           "exam_lingo.txt", "text/plain", width="stretch")
+        download(e1, "⬇️ Questions + solutions PDF", exam_pdf.build(items, title, True),
+                 "exam_with_solutions.pdf", "application/pdf")
+        download(e2, "⬇️ Questions only PDF", exam_pdf.build(items, title, False),
+                 "exam_questions.pdf", "application/pdf")
+        download(e3, "⬇️ All lingo (.txt, reload later)", "\n\n---\n\n".join(x["text"] for x in ss.exam),
+                 "exam_lingo.txt", "text/plain")
         st.divider()
         for i, x in enumerate(ss.exam):
             a, b = st.columns([0.55, 0.45], gap="large")
