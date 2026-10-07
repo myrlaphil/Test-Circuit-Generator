@@ -57,6 +57,10 @@ The optional AI translator is the one feature meant for the desktop version.
 - Problem set → two-part PDF (questions, then worked solutions)
 - "What code made this?" expander showing the exact Schemdraw script, with documentation links
 
+## Command-line / agent-skill version
+The same engine is packaged as a sharable Agent Skill for Cursor and Claude Code, with settings in a JSON file
+and no web interface: https://github.com/myrlaphil/circuit-diagram-skill
+
 ## Roadmap
 - RC time constants, multi-battery loops and bridges (the JSON-spec engine in `circuit_core.py` already solves loops)
 - Upload a photo of an existing figure and generate a variation
