@@ -495,10 +495,17 @@ def _tex_name(name: str) -> str:
     return f"${name[0]}_{{{name[1:]}}}$" if re.fullmatch(r"[A-Za-z][A-Za-z0-9]+", name) else name
 
 
+LABELS = "name_and_value"      # what a resistor/capacitor label shows: name_and_value | value | name
+
+
 def _label(p: R) -> str:
     if p.hidden:
         return f"{p.name} = ?"
     if p.kind in ("R", "C"):
+        if LABELS == "value":
+            return fmt_value(p)
+        if LABELS == "name":
+            return _tex_name(p.name)
         return f"{_tex_name(p.name)}\n{fmt_value(p)}"
     if p.kind == "S":
         return f"{_tex_name(p.name)}\n({'closed' if p.closed else 'open'})"
@@ -559,8 +566,13 @@ def _draw(n: Node, x: float, y: float, L: List[str], loc: Optional[str] = None) 
     L.append(f"d += elm.Dot().at({_pt(xr, y)})")
 
 
-def draw_code(p: Problem, style: str = "US") -> str:
-    """Problem -> complete Schemdraw script.  The last series item goes on the bottom rail, like a worksheet."""
+def draw_code(p: Problem, style: str = "US", labels: str = LABELS, font_size: int = 12) -> str:
+    """Problem -> complete Schemdraw script.  The last series item goes on the bottom rail, like a worksheet.
+    style: "US" (IEEE zig-zag resistors) or "IEC" (boxes).  labels: name_and_value | value | name."""
+    global LABELS
+    if labels not in ("name_and_value", "value", "name"):
+        raise LingoError(f"labels must be name_and_value, value or name, not '{labels}'.")
+    LABELS = labels
     top: List[Node]
     bottom: Optional[Node]
     if isinstance(p.tree, Group) and p.tree.kind == "series" and len(p.tree.items) >= 2:
@@ -574,7 +586,7 @@ def draw_code(p: Problem, style: str = "US") -> str:
     H = max(4.0, tdown + bup + 2.2)
     L = ["import schemdraw", "import schemdraw.elements as elm", "",
          f"elm.style(elm.STYLE_{'IEC' if style == 'IEC' else 'IEEE'})",
-         "d = schemdraw.Drawing(show=False)", f"d.config(unit={W:g}, fontsize=12)", "",
+         "d = schemdraw.Drawing(show=False)", f"d.config(unit={W:g}, fontsize={int(font_size)})", "",
          "# battery on the left (+ at the top)",
          f"battery = d.add(elm.BatteryCell().endpoints({_pt(0, H)}, {_pt(0, 0)}).label({f'{p.volts:.1f} V'!r}))",
          "", "# top rail"]

@@ -288,3 +288,14 @@ def test_unknown_resistor_gives_battery_current_and_asks_resistance():
     assert lingo.translate("24 V battery, a 4 ohm in series with a 12 ohm, then a 6 ohm. The 6 ohm is unknown. "
                            "Find the resistance of R3 and the current through R3.").endswith(
         "ask: resistance of R3, current through R3\nhide: R3")
+
+
+def test_draw_code_label_and_font_options():
+    p = lingo.parse("source: 12 V\ncircuit: 4 + 2uF")
+    assert "$R_{1}$\\n4.00 Ω" in lingo.draw_code(p)
+    assert "'4.00 Ω'" in lingo.draw_code(p, labels="value") and "R_{1}" not in lingo.draw_code(p, labels="value")
+    assert "'$C_{1}$'" in lingo.draw_code(p, labels="name")
+    assert "fontsize=14" in lingo.draw_code(p, "IEC", font_size=14) and "STYLE_IEC" in lingo.draw_code(p, "IEC")
+    assert "$R_{1}$\\n4.00 Ω" in lingo.draw_code(p)          # the default is back after a labels= call
+    with pytest.raises(lingo.LingoError, match="labels must be"):
+        lingo.draw_code(p, labels="big")

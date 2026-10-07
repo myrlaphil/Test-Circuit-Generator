@@ -45,7 +45,7 @@ def run(code: str, backend: str):
     return d
 
 
-def render_files(code: str, out_dir: str) -> dict:
+def render_files(code: str, out_dir: str, dpi: int = 220, formats=("svg", "png", "pdf")) -> dict:
     """Run the drawing code and write diagram.svg / .png / .pdf into out_dir.
 
     Returns {"ok": True} or {"ok": False, "error": ..., "line": ...}.  Used by the
@@ -53,14 +53,18 @@ def render_files(code: str, out_dir: str) -> dict:
     browser (stlite / Pyodide), where there are no subprocesses.
     """
     try:
-        # pass 1: native SVG backend -> labels stay real, editable text
-        d = run(code, "svg")
-        with open(os.path.join(out_dir, "diagram.svg"), "wb") as f:
-            f.write(d.get_imagedata("svg"))
-        # pass 2: Matplotlib backend -> PNG and PDF without any extra system libraries
-        d = run(code, "matplotlib")
-        d.save(os.path.join(out_dir, "diagram.png"), transparent=False, dpi=220)
-        d.save(os.path.join(out_dir, "diagram.pdf"), transparent=False)
+        if "svg" in formats:
+            # native SVG backend -> labels stay real, editable text
+            d = run(code, "svg")
+            with open(os.path.join(out_dir, "diagram.svg"), "wb") as f:
+                f.write(d.get_imagedata("svg"))
+        if "png" in formats or "pdf" in formats:
+            # Matplotlib backend -> PNG and PDF without any extra system libraries
+            d = run(code, "matplotlib")
+            if "png" in formats:
+                d.save(os.path.join(out_dir, "diagram.png"), transparent=False, dpi=int(dpi))
+            if "pdf" in formats:
+                d.save(os.path.join(out_dir, "diagram.pdf"), transparent=False)
         return {"ok": True}
     except Exception as e:  # noqa: BLE001 - we want every error reported back
         tb = traceback.extract_tb(sys.exc_info()[2])
